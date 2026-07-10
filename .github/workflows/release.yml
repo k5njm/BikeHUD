@@ -1,0 +1,102 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create/use (e.g. v0.1.0). Leave empty when triggered by tag push."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & publish release
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PlatformIO
+        run: pip install -U platformio
+
+      - name: Build firmware
+        working-directory: firmware
+        run: |
+          pio run -e x4
+          pio run -e x4_demo
+
+      - name: Package firmware artifacts
+        run: |
+          mkdir -p dist
+          cp firmware/.pio/build/x4/firmware.bin dist/bikehud-x4-firmware.bin
+          if [ -f firmware/.pio/build/x4/firmware.factory.bin ]; then
+            cp firmware/.pio/build/x4/firmware.factory.bin dist/bikehud-x4-factory.bin
+          fi
+          cp firmware/.pio/build/x4_demo/firmware.bin dist/bikehud-x4-demo-firmware.bin
+          shasum -a 256 dist/* > dist/SHA256SUMS.txt
+          cat dist/SHA256SUMS.txt
+
+      - name: Build BikeHudProtocol
+        working-directory: ios/BikeHudProtocol
+        run: swift build -c release
+
+      - name: Build iOS app (Simulator, compile-check)
+        working-directory: ios/BikeHudApp
+        run: |
+          xcodebuild \
+            -project BikeHudApp.xcodeproj \
+            -scheme BikeHudApp \
+            -configuration Release \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Resolve release tag
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Using tag: $TAG"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: BikeHUD ${{ steps.meta.outputs.tag }}
+          generate_release_notes: true
+          body: |
+            ## BikeHUD ${{ steps.meta.outputs.tag }} (WIP)
+
+            ### Firmware (Xteink X4 / ESP32-C3)
+            - `bikehud-x4-firmware.bin` — flash at **0x10000** (or use PlatformIO `pio run -t upload`)
+            - `bikehud-x4-factory.bin` — combined bootloader + partitions + app (if present)
+            - `bikehud-x4-demo-firmware.bin` — synthetic telemetry, no BLE
+
+            **Before flashing:** back up the device (`./scripts/backup-x4.sh`). See [docs/flash-and-restore.md](docs/flash-and-restore.md).
+
+            ### iOS
+            This release verifies the app **compiles** for the Simulator.
+            Install on a phone with Xcode + free Personal Team until signed-IPA CI is configured ([docs/ci.md](docs/ci.md)).
+
+            ### Protocol
+            Wire format v1 is in `protocol/bike_hud_protocol.h` and `ios/BikeHudProtocol`.
+          files: |
+            dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

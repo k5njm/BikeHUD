@@ -1,0 +1,33 @@
+# Optional: regenerate the Xcode project with xcodegen if you prefer.
+#   brew install xcodegen && cd ios/BikeHudApp && xcodegen generate
+name: BikeHudApp
+options:
+  bundleIdPrefix: com.nick
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+packages:
+  BikeHudProtocol:
+    path: ../BikeHudProtocol
+targets:
+  BikeHudApp:
+    type: application
+    platform: iOS
+    sources:
+      - BikeHudApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.nick.bikehud
+        INFOPLIST_FILE: BikeHudApp/Info.plist
+        CODE_SIGN_ENTITLEMENTS: BikeHudApp/BikeHudApp.entitlements
+        TARGETED_DEVICE_FAMILY: "1,2"
+        DEVELOPMENT_TEAM: ""
+    dependencies:
+      - package: BikeHudProtocol
+    info:
+      path: BikeHudApp/Info.plist
+      properties:
+        CFBundleDisplayName: Bike HUD

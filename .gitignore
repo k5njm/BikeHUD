@@ -1,0 +1,51 @@
+# macOS
+.DS_Store
+*.swp
+*~
+
+# Firmware / PlatformIO
+firmware/.pio/
+firmware/.vscode/.browse.c_cpp.db*
+firmware/.vscode/c_cpp_properties.json
+firmware/.vscode/launch.json
+firmware/.vscode/ipch
+firmware/sdkconfig.*
+
+# iOS / Xcode
+ios/**/DerivedData/
+ios/**/.build/
+ios/**/*.xcuserstate
+ios/**/xcuserdata/
+ios/**/*.xccheckout
+ios/**/*.xcscmblueprint
+ios/**/Pods/
+ios/**/*.ipa
+ios/**/*.dSYM.zip
+ios/**/*.dSYM
+.swiftpm/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local full-flash dumps & firmware blobs (keep offline; never commit)
+backups/
+*.bin
+!firmware/partitions.csv
+
+# IDE
+.idea/
+*.code-workspace
+.cursor/
+
+# Secrets / local signing material (never commit)
+*.p12
+*.mobileprovision
+ExportOptions.plist
+secrets/
+
+# Misc
+*.log
+dist/

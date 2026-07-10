@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  firmware:
+    name: Firmware (PlatformIO)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PlatformIO
+        run: pip install -U platformio
+
+      - name: Build x4 (BLE + HUD)
+        working-directory: firmware
+        run: pio run -e x4
+
+      - name: Build x4_demo
+        working-directory: firmware
+        run: pio run -e x4_demo
+
+      - name: Upload firmware binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-bins
+          path: |
+            firmware/.pio/build/x4/firmware.bin
+            firmware/.pio/build/x4/firmware.factory.bin
+            firmware/.pio/build/x4_demo/firmware.bin
+          if-no-files-found: warn
+
+  protocol-swift:
+    name: BikeHudProtocol (Swift)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: swift build
+        working-directory: ios/BikeHudProtocol
+        run: swift build
+
+      - name: swift test
+        working-directory: ios/BikeHudProtocol
+        run: swift test
+        continue-on-error: false
+
+  ios-simulator:
+    name: iOS app (Simulator, unsigned)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          echo "Available Xcodes:"
+          ls /Applications | grep -i xcode || true
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer || true
+          xcodebuild -version
+
+      - name: Resolve packages / list schemes
+        working-directory: ios/BikeHudApp
+        run: |
+          xcodebuild -project BikeHudApp.xcodeproj -list
+          xcodebuild -project BikeHudApp.xcodeproj -scheme BikeHudApp -resolvePackageDependencies
+
+      - name: Build for iOS Simulator
+        working-directory: ios/BikeHudApp
+        run: |
+          xcodebuild \
+            -project BikeHudApp.xcodeproj \
+            -scheme BikeHudApp \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
