@@ -6,8 +6,9 @@
 
 | Job | Runner | Checks |
 |---|---|---|
+| `protocol-c` | `ubuntu-latest` | `protocol/tests/test_protocol.c` (packet size, test vector, version) |
 | `firmware` | `ubuntu-latest` | `pio run -e x4`, `pio run -e x4_demo` |
-| `protocol-swift` | `macos-latest` | `swift build` in `ios/BikeHudProtocol` |
+| `protocol-swift` | `macos-latest` | `swift build` + **`swift test`** in `ios/BikeHudProtocol` |
 | `ios-simulator` | `macos-latest` | `xcodebuild` **iphonesimulator**, `CODE_SIGNING_ALLOWED=NO` |
 
 No Apple certificates are required. Failures mean “doesn’t compile,” not “won’t install on a phone.”
@@ -49,11 +50,15 @@ Or: Actions → **Release** → Run workflow.
 ## Local parity
 
 ```bash
+# Protocol (C host tests)
+cc -std=c11 -I protocol -o /tmp/test_protocol protocol/tests/test_protocol.c
+/tmp/test_protocol
+
 # Firmware
 cd firmware && pio run -e x4 && pio run -e x4_demo
 
-# Protocol
-cd ios/BikeHudProtocol && swift build
+# Protocol (Swift)
+cd ios/BikeHudProtocol && swift build && swift test
 
 # iOS (with Xcode installed)
 cd ios/BikeHudApp

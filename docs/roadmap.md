@@ -10,6 +10,9 @@
 - [x] HUD threads BLE link state onto status page  
 - [x] Public GitHub repo + CI (firmware / Swift / iOS simulator)  
 - [x] Release workflow (tag `v*`) with firmware artifacts  
+- [x] Protocol host tests (C) + expanded Swift package tests in CI  
+- [x] Contributing guide + issue/PR templates  
+ 
 
 ## Phase 1 — BLE loop
 
