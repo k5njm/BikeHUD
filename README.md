@@ -1,6 +1,6 @@
 # BikeHUD
 
-[![CI](https://github.com/k5njm/bike-computer/actions/workflows/ci.yml/badge.svg)](https://github.com/k5njm/bike-computer/actions/workflows/ci.yml)
+[![CI](https://github.com/k5njm/BikeHUD/actions/workflows/ci.yml/badge.svg)](https://github.com/k5njm/BikeHUD/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/status-WIP-orange.svg)](#status--wip)
 
