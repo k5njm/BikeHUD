@@ -122,67 +122,104 @@ void formatElapsed(char *buf, size_t n, uint16_t seconds) {
   }
 }
 
-// --- LCD-style 7-segment hero digits (chamfered ends) -------------------
+// --- Classic 7-segment hero speed (vector segments, not a TTF) -----------
+// Flash/RAM cost is just a few drawing helpers — no font tables.
 // Segment bits: A top, B UR, C LR, D bottom, E LL, F UL, G middle
 static const uint8_t kSeg[12] = {
     0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F, 0x00, 0x40,
 };
 
-/** Horizontal segment: rectangle with triangular tips (cleaner than flat bars). */
-void drawHSeg(int16_t x, int16_t y, int16_t w, int16_t t) {
-  if (w < t * 2 + 2 || t < 2)
+/**
+ * Horizontal hexagon segment (pointy ends) — calculator / LED look.
+ * Bounding box (x,y,w,h) is the full segment including tips.
+ */
+void drawHSegHex(int16_t x, int16_t y, int16_t w, int16_t h) {
+  if (w < 6 || h < 3)
     return;
-  const int16_t body = w - t;
-  display.fillRect(x + t / 2, y, body, t, GxEPD_BLACK);
-  display.fillTriangle(x, y + t / 2, x + t / 2, y, x + t / 2, y + t - 1,
-                       GxEPD_BLACK);
-  display.fillTriangle(x + w - 1, y + t / 2, x + w - t / 2 - 1, y,
-                       x + w - t / 2 - 1, y + t - 1, GxEPD_BLACK);
+  const int16_t tip = h / 2; // 45° cut depth
+  //   1---------2
+  //  /           \
+  // 0             3
+  //  \           /
+  //   5---------4
+  const int16_t x0 = x;
+  const int16_t x1 = x + tip;
+  const int16_t x2 = x + w - tip;
+  const int16_t x3 = x + w - 1;
+  const int16_t ym = y + h / 2;
+  const int16_t y0 = y;
+  const int16_t y1 = y + h - 1;
+  // Two triangles + center rect
+  display.fillTriangle(x0, ym, x1, y0, x1, y1, GxEPD_BLACK);
+  display.fillTriangle(x3, ym, x2, y0, x2, y1, GxEPD_BLACK);
+  if (x2 > x1) {
+    display.fillRect(x1, y0, x2 - x1 + 1, h, GxEPD_BLACK);
+  }
 }
 
-/** Vertical segment: same idea, rotated. */
-void drawVSeg(int16_t x, int16_t y, int16_t t, int16_t h) {
-  if (h < t * 2 + 2 || t < 2)
+/** Vertical hexagon segment. */
+void drawVSegHex(int16_t x, int16_t y, int16_t w, int16_t h) {
+  if (h < 6 || w < 3)
     return;
-  const int16_t body = h - t;
-  display.fillRect(x, y + t / 2, t, body, GxEPD_BLACK);
-  display.fillTriangle(x + t / 2, y, x, y + t / 2, x + t - 1, y + t / 2,
-                       GxEPD_BLACK);
-  display.fillTriangle(x + t / 2, y + h - 1, x, y + h - t / 2 - 1,
-                       x + t - 1, y + h - t / 2 - 1, GxEPD_BLACK);
+  const int16_t tip = w / 2;
+  const int16_t xm = x + w / 2;
+  const int16_t y0 = y;
+  const int16_t y1 = y + tip;
+  const int16_t y2 = y + h - tip;
+  const int16_t y3 = y + h - 1;
+  const int16_t xl = x;
+  const int16_t xr = x + w - 1;
+  display.fillTriangle(xm, y0, xl, y1, xr, y1, GxEPD_BLACK);
+  display.fillTriangle(xm, y3, xl, y2, xr, y2, GxEPD_BLACK);
+  if (y2 > y1) {
+    display.fillRect(xl, y1, w, y2 - y1 + 1, GxEPD_BLACK);
+  }
 }
 
 void drawSegDigit(int16_t x, int16_t y, int16_t dw, int16_t dh, uint8_t code) {
-  // Thickness ~18% of width; keep odd-ish for centering
-  int16_t t = dw / 5;
-  if (t < 8)
-    t = 8;
-  if (t > 18)
-    t = 18;
+  // Classic tall digit: thickness ~14% of min dimension, gap between segs.
+  int16_t t = (dw < dh ? dw : dh) / 7;
+  if (t < 10)
+    t = 10;
+  if (t > 22)
+    t = 22;
+  const int16_t gap = (t > 12) ? 3 : 2;
 
-  const int16_t pad = t / 3;
-  const int16_t x0 = x + pad;
-  const int16_t y0 = y + pad;
-  const int16_t x1 = x + dw - pad - t;
-  const int16_t y1 = y + dh - pad - t;
-  const int16_t mid = y + (dh - t) / 2;
-  const int16_t hSegW = dw - 2 * pad;
-  const int16_t vSegH = (dh - 2 * pad - t) / 2 + t / 2;
+  // Outer inset so neighbouring digits don't touch
+  const int16_t ox = x + gap;
+  const int16_t oy = y + gap;
+  const int16_t ow = dw - 2 * gap;
+  const int16_t oh = dh - 2 * gap;
 
+  // Horizontal segment geometry
+  const int16_t hx = ox + t / 2 + gap;
+  const int16_t hw = ow - t - 2 * gap;
+  // Vertical segment geometry
+  const int16_t vx_l = ox;
+  const int16_t vx_r = ox + ow - t;
+  const int16_t v_top_y = oy + t / 2 + gap;
+  const int16_t v_bot_y = oy + oh / 2 + gap;
+  const int16_t vh = oh / 2 - t / 2 - 2 * gap;
+
+  // A (top)
   if (code & 0x01)
-    drawHSeg(x0, y0, hSegW, t); // A
-  if (code & 0x02)
-    drawVSeg(x1, y0, t, vSegH); // B
-  if (code & 0x04)
-    drawVSeg(x1, mid, t, vSegH); // C
-  if (code & 0x08)
-    drawHSeg(x0, y1, hSegW, t); // D
-  if (code & 0x10)
-    drawVSeg(x0, mid, t, vSegH); // E
-  if (code & 0x20)
-    drawVSeg(x0, y0, t, vSegH); // F
+    drawHSegHex(hx, oy, hw, t);
+  // G (middle)
   if (code & 0x40)
-    drawHSeg(x0, mid, hSegW, t); // G
+    drawHSegHex(hx, oy + (oh - t) / 2, hw, t);
+  // D (bottom)
+  if (code & 0x08)
+    drawHSegHex(hx, oy + oh - t, hw, t);
+  // F (upper left) / B (upper right)
+  if (code & 0x20)
+    drawVSegHex(vx_l, v_top_y, t, vh);
+  if (code & 0x02)
+    drawVSegHex(vx_r, v_top_y, t, vh);
+  // E (lower left) / C (lower right)
+  if (code & 0x10)
+    drawVSegHex(vx_l, v_bot_y, t, vh);
+  if (code & 0x04)
+    drawVSegHex(vx_r, v_bot_y, t, vh);
 }
 
 uint8_t charToSeg(char c) {
@@ -193,7 +230,7 @@ uint8_t charToSeg(char c) {
   return kSeg[10];
 }
 
-/** Draw speed string like "15.5" or "--.-" centered in the hero box. */
+/** Draw speed string like "15.5" as 7-segment glyphs centered in the hero box. */
 void drawHeroNumber(int16_t box_x, int16_t box_y, int16_t box_w, int16_t box_h,
                     const char *text) {
   int glyphs = 0;
@@ -207,22 +244,22 @@ void drawHeroNumber(int16_t box_x, int16_t box_y, int16_t box_w, int16_t box_h,
   if (glyphs < 1)
     glyphs = 1;
 
-  const int16_t gap = 14;
-  const int16_t dot_w = 16;
+  const int16_t gap = 12;
+  const int16_t dot_w = 18;
 
-  // Taller digits — ~62% of hero panel, wider aspect (less “skinny LCD”)
-  int16_t dh = (int16_t)(box_h * 0.62f);
-  if (dh < 100)
-    dh = 100;
-  if (dh > 220)
-    dh = 220;
-  int16_t dw = (int16_t)(dh * 0.62f);
+  // Classic 7-seg is taller than wide (~1.7:1)
+  int16_t dh = (int16_t)(box_h * 0.70f);
+  if (dh < 110)
+    dh = 110;
+  if (dh > 240)
+    dh = 240;
+  int16_t dw = (int16_t)(dh * 0.55f);
 
   int16_t total =
       glyphs * dw + (glyphs > 0 ? (glyphs - 1) * gap : 0) +
       dots * (dot_w + gap / 2);
-  if (total > box_w - 20) {
-    const float scale = (float)(box_w - 20) / (float)total;
+  if (total > box_w - 16) {
+    const float scale = (float)(box_w - 16) / (float)total;
     dw = (int16_t)(dw * scale);
     dh = (int16_t)(dh * scale);
     total = glyphs * dw + (glyphs > 0 ? (glyphs - 1) * gap : 0) +
@@ -230,13 +267,14 @@ void drawHeroNumber(int16_t box_x, int16_t box_y, int16_t box_w, int16_t box_h,
   }
 
   int16_t cx = box_x + (box_w - total) / 2;
-  int16_t cy = box_y + (box_h - dh) / 2 + 4;
-  const int16_t dot_r = (dh < 120) ? 5 : 7;
+  int16_t cy = box_y + (box_h - dh) / 2 + 2;
+  // Square DP like real LED modules (not a round period)
+  const int16_t dsz = (dh < 140) ? 12 : 16;
 
   for (const char *p = text; *p; ++p) {
     if (*p == '.') {
-      display.fillCircle(cx + dot_w / 2, cy + dh - dot_r - 4, dot_r,
-                         GxEPD_BLACK);
+      display.fillRect(cx + (dot_w - dsz) / 2, cy + dh - dsz - 6, dsz, dsz,
+                       GxEPD_BLACK);
       cx += dot_w + gap / 2;
     } else {
       drawSegDigit(cx, cy, dw, dh, charToSeg(*p));
