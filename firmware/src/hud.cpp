@@ -116,52 +116,67 @@ void formatElapsed(char *buf, size_t n, uint16_t seconds) {
   }
 }
 
-// --- 7-segment style chunky digits (hero speed) -------------------------
-// Segment map: 0=A top, 1=B upper-right, 2=C lower-right, 3=D bottom,
-//              4=E lower-left, 5=F upper-left, 6=G middle
+// --- LCD-style 7-segment hero digits (chamfered ends) -------------------
+// Segment bits: A top, B UR, C LR, D bottom, E LL, F UL, G middle
 static const uint8_t kSeg[12] = {
-    0x3F, // 0
-    0x06, // 1
-    0x5B, // 2
-    0x4F, // 3
-    0x66, // 4
-    0x6D, // 5
-    0x7D, // 6
-    0x07, // 7
-    0x7F, // 8
-    0x6F, // 9
-    0x00, // blank
-    0x40, // dash (middle only)
+    0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F, 0x00, 0x40,
 };
 
-void fillHBar(int16_t x, int16_t y, int16_t w, int16_t t) {
-  display.fillRect(x, y, w, t, GxEPD_BLACK);
+/** Horizontal segment: rectangle with triangular tips (cleaner than flat bars). */
+void drawHSeg(int16_t x, int16_t y, int16_t w, int16_t t) {
+  if (w < t * 2 + 2 || t < 2)
+    return;
+  const int16_t body = w - t;
+  display.fillRect(x + t / 2, y, body, t, GxEPD_BLACK);
+  display.fillTriangle(x, y + t / 2, x + t / 2, y, x + t / 2, y + t - 1,
+                       GxEPD_BLACK);
+  display.fillTriangle(x + w - 1, y + t / 2, x + w - t / 2 - 1, y,
+                       x + w - t / 2 - 1, y + t - 1, GxEPD_BLACK);
 }
 
-void fillVBar(int16_t x, int16_t y, int16_t t, int16_t h) {
-  display.fillRect(x, y, t, h, GxEPD_BLACK);
+/** Vertical segment: same idea, rotated. */
+void drawVSeg(int16_t x, int16_t y, int16_t t, int16_t h) {
+  if (h < t * 2 + 2 || t < 2)
+    return;
+  const int16_t body = h - t;
+  display.fillRect(x, y + t / 2, t, body, GxEPD_BLACK);
+  display.fillTriangle(x + t / 2, y, x, y + t / 2, x + t - 1, y + t / 2,
+                       GxEPD_BLACK);
+  display.fillTriangle(x + t / 2, y + h - 1, x, y + h - t / 2 - 1,
+                       x + t - 1, y + h - t / 2 - 1, GxEPD_BLACK);
 }
 
 void drawSegDigit(int16_t x, int16_t y, int16_t dw, int16_t dh, uint8_t code) {
-  const int16_t t = (dw < 40) ? 6 : 10; // stroke thickness
-  const int16_t inset = t / 2;
-  const int16_t mid_y = y + dh / 2 - t / 2;
-  const int16_t inner_h = (dh - 3 * t) / 2;
+  // Thickness ~18% of width; keep odd-ish for centering
+  int16_t t = dw / 5;
+  if (t < 8)
+    t = 8;
+  if (t > 18)
+    t = 18;
 
-  if (code & 0x01) // A top
-    fillHBar(x + inset, y, dw - 2 * inset, t);
-  if (code & 0x02) // B UR
-    fillVBar(x + dw - t, y + inset, t, inner_h + t);
-  if (code & 0x04) // C LR
-    fillVBar(x + dw - t, mid_y, t, inner_h + t);
-  if (code & 0x08) // D bottom
-    fillHBar(x + inset, y + dh - t, dw - 2 * inset, t);
-  if (code & 0x10) // E LL
-    fillVBar(x, mid_y, t, inner_h + t);
-  if (code & 0x20) // F UL
-    fillVBar(x, y + inset, t, inner_h + t);
-  if (code & 0x40) // G mid
-    fillHBar(x + inset, mid_y, dw - 2 * inset, t);
+  const int16_t pad = t / 3;
+  const int16_t x0 = x + pad;
+  const int16_t y0 = y + pad;
+  const int16_t x1 = x + dw - pad - t;
+  const int16_t y1 = y + dh - pad - t;
+  const int16_t mid = y + (dh - t) / 2;
+  const int16_t hSegW = dw - 2 * pad;
+  const int16_t vSegH = (dh - 2 * pad - t) / 2 + t / 2;
+
+  if (code & 0x01)
+    drawHSeg(x0, y0, hSegW, t); // A
+  if (code & 0x02)
+    drawVSeg(x1, y0, t, vSegH); // B
+  if (code & 0x04)
+    drawVSeg(x1, mid, t, vSegH); // C
+  if (code & 0x08)
+    drawHSeg(x0, y1, hSegW, t); // D
+  if (code & 0x10)
+    drawVSeg(x0, mid, t, vSegH); // E
+  if (code & 0x20)
+    drawVSeg(x0, y0, t, vSegH); // F
+  if (code & 0x40)
+    drawHSeg(x0, mid, hSegW, t); // G
 }
 
 uint8_t charToSeg(char c) {
@@ -169,54 +184,53 @@ uint8_t charToSeg(char c) {
     return kSeg[c - '0'];
   if (c == '-')
     return kSeg[11];
-  return kSeg[10]; // blank
+  return kSeg[10];
 }
 
-/** Draw chunky speed string like "31.6" or "--.-" centered in box. */
+/** Draw speed string like "15.5" or "--.-" centered in the hero box. */
 void drawHeroNumber(int16_t box_x, int16_t box_y, int16_t box_w, int16_t box_h,
                     const char *text) {
-  // Count glyphs (skip '.') for layout width.
   int glyphs = 0;
+  int dots = 0;
   for (const char *p = text; *p; ++p) {
-    if (*p != '.')
+    if (*p == '.')
+      dots++;
+    else
       glyphs++;
   }
   if (glyphs < 1)
     glyphs = 1;
 
-  const int16_t gap = 10;
-  const int16_t dot_w = 14;
-  // Estimate total width: glyphs*dw + gaps + dots
-  int16_t dots = 0;
-  for (const char *p = text; *p; ++p) {
-    if (*p == '.')
-      dots++;
-  }
-  // Prefer digit height ~ 55% of box
-  int16_t dh = (int16_t)(box_h * 0.55f);
-  if (dh < 80)
-    dh = 80;
-  if (dh > 200)
-    dh = 200;
-  int16_t dw = (int16_t)(dh * 0.58f);
+  const int16_t gap = 14;
+  const int16_t dot_w = 16;
+
+  // Taller digits — ~62% of hero panel, wider aspect (less “skinny LCD”)
+  int16_t dh = (int16_t)(box_h * 0.62f);
+  if (dh < 100)
+    dh = 100;
+  if (dh > 220)
+    dh = 220;
+  int16_t dw = (int16_t)(dh * 0.62f);
 
   int16_t total =
-      glyphs * dw + (glyphs - 1) * gap + dots * (dot_w + gap / 2);
-  // Shrink if too wide
-  if (total > box_w - 16) {
-    const float scale = (float)(box_w - 16) / (float)total;
+      glyphs * dw + (glyphs > 0 ? (glyphs - 1) * gap : 0) +
+      dots * (dot_w + gap / 2);
+  if (total > box_w - 20) {
+    const float scale = (float)(box_w - 20) / (float)total;
     dw = (int16_t)(dw * scale);
     dh = (int16_t)(dh * scale);
-    total =
-        glyphs * dw + (glyphs - 1) * gap + dots * (dot_w + gap / 2);
+    total = glyphs * dw + (glyphs > 0 ? (glyphs - 1) * gap : 0) +
+            dots * (dot_w + gap / 2);
   }
 
   int16_t cx = box_x + (box_w - total) / 2;
-  int16_t cy = box_y + (box_h - dh) / 2 + 8;
+  int16_t cy = box_y + (box_h - dh) / 2 + 4;
+  const int16_t dot_r = (dh < 120) ? 5 : 7;
 
   for (const char *p = text; *p; ++p) {
     if (*p == '.') {
-      display.fillCircle(cx + dot_w / 2, cy + dh - 12, 6, GxEPD_BLACK);
+      display.fillCircle(cx + dot_w / 2, cy + dh - dot_r - 4, dot_r,
+                         GxEPD_BLACK);
       cx += dot_w + gap / 2;
     } else {
       drawSegDigit(cx, cy, dw, dh, charToSeg(*p));

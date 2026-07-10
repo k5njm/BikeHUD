@@ -46,9 +46,10 @@ extern "C" {
 #define BIKE_HUD_HUB_IPHONE 1u
 #define BIKE_HUD_HUB_WATCH 2u
 
-/** Stale thresholds on the X4 (milliseconds since last good packet). */
-#define BIKE_HUD_STALE_WEAK_MS 3000u
-#define BIKE_HUD_STALE_HARD_MS 8000u
+/** Stale thresholds on the X4 (ms since last good packet). Not RF RSSI —
+ *  e-ink paints and phone scheduler jitter can delay the next write. */
+#define BIKE_HUD_STALE_WEAK_MS 5000u
+#define BIKE_HUD_STALE_HARD_MS 15000u
 
 #pragma pack(push, 1)
 typedef struct BikeHudPacketV1 {

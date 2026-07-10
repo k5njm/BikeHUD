@@ -58,11 +58,13 @@ Inspired by stravaV10 locator age.
 
 | Age since last good packet | HUD behaviour |
 |---|---|
-| ≤ 3 s | Live numbers |
-| 3–8 s | Show values + “WEAK LINK” status |
-| \> 8 s | “NO DATA” / waiting screen — **do not** present last numbers as truth |
+| ≤ 5 s | Live numbers |
+| 5–15 s | Show values + “WEAK” status (packet age, not BLE RSSI) |
+| \> 15 s | “STALE” — hide live numbers as truth |
 
-Constants: `BIKE_HUD_STALE_WEAK_MS = 3000`, `BIKE_HUD_STALE_HARD_MS = 8000`.
+Constants: `BIKE_HUD_STALE_WEAK_MS = 5000`, `BIKE_HUD_STALE_HARD_MS = 15000`.  
+Brief e-ink refresh stalls or phone timer jitter can open a multi-second gap even when the radio link is fine.
+
 
 ## Display cadence
 
