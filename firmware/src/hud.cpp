@@ -86,7 +86,9 @@ void formatDistance(char *buf, size_t n, uint16_t distance_m) {
   }
 }
 
-const char *distanceLabel() { return kUseImperial ? "DST mi" : "DST km"; }
+const char *distanceLabel() {
+  return kUseImperial ? "DISTANCE mi" : "DISTANCE km";
+}
 
 /** Elevation — feet or metres. */
 void formatElev(char *buf, size_t n, int16_t elev_m) {
@@ -99,9 +101,13 @@ void formatElev(char *buf, size_t n, int16_t elev_m) {
   }
 }
 
-const char *elevLabel() { return kUseImperial ? "ELEV ft" : "ELEV m"; }
+const char *elevLabel() {
+  return kUseImperial ? "ELEVATION ft" : "ELEVATION m";
+}
 
-const char *avgLabel() { return kUseImperial ? "AVG mph" : "AVG km/h"; }
+const char *avgLabel() {
+  return kUseImperial ? "AVG SPEED mph" : "AVG SPEED km/h";
+}
 
 /** Elapsed workout time (not wall clock). Always 24h-style HH:MM:SS when ≥1h. */
 void formatElapsed(char *buf, size_t n, uint16_t seconds) {
@@ -265,43 +271,141 @@ void drawLabelLeft(const GFXfont *font, int16_t x, int16_t baseline_y,
   display.print(s);
 }
 
-/** Metric cell: thick border, small label top-left, big value centered. */
+static const char *const kDowAbbrev[] = {"Sun", "Mon", "Tue", "Wed",
+                                         "Thu", "Fri", "Sat"};
+static const char *const kMonthAbbrev[] = {
+    "???", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+
+void formatWallClock(char *buf, size_t n, const Telemetry &tel) {
+  if (!tel.clock_valid || tel.month < 1 || tel.month > 12 ||
+      tel.day_of_week > 6) {
+    buf[0] = '\0';
+    return;
+  }
+  // "Fri Jul 10 · 18:34"
+  snprintf(buf, n, "%s %s %u · %02u:%02u", kDowAbbrev[tel.day_of_week],
+           kMonthAbbrev[tel.month], (unsigned)tel.day, (unsigned)tel.hour,
+           (unsigned)tel.minute);
+}
+
+void drawSparkline(int16_t x, int16_t y, int16_t w, int16_t h,
+                   const MetricSeries &series) {
+  if (series.count < 2 || w < 8 || h < 8) {
+    return;
+  }
+  uint8_t tmp[MetricSeries::kCap];
+  const uint8_t n = series.copyChronological(tmp, MetricSeries::kCap);
+  uint8_t lo = 255, hi = 0;
+  for (uint8_t i = 0; i < n; i++) {
+    if (tmp[i] < lo)
+      lo = tmp[i];
+    if (tmp[i] > hi)
+      hi = tmp[i];
+  }
+  // Flat line if no variation
+  uint8_t span = (uint8_t)(hi - lo);
+  if (span < 2) {
+    span = 2;
+    if (lo > 0)
+      lo--;
+  }
+  display.drawRect(x, y, w, h, GxEPD_BLACK);
+  int16_t prev_px = 0, prev_py = 0;
+  for (uint8_t i = 0; i < n; i++) {
+    const int16_t px = x + 1 + (int16_t)((int32_t)i * (w - 3) / (n - 1));
+    const int16_t py =
+        y + h - 2 -
+        (int16_t)((int32_t)(tmp[i] - lo) * (h - 4) / span);
+    if (i > 0) {
+      display.drawLine(prev_px, prev_py, px, py, GxEPD_BLACK);
+    }
+    prev_px = px;
+    prev_py = py;
+  }
+}
+
+/** Simple metric cell: label + centered value. */
 void drawMetricCell(int16_t x, int16_t y, int16_t w, int16_t h,
                     const char *label, const char *value,
                     const GFXfont *value_font) {
   display.drawRect(x, y, w, h, GxEPD_BLACK);
   display.drawRect(x + 1, y + 1, w - 2, h - 2, GxEPD_BLACK);
 
-  drawLabelLeft(&FreeSansBold9pt7b, x + 10, y + 20, label);
+  drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + 18, label);
 
   int16_t vw, vh;
   textSize(value_font, value, &vw, &vh);
   const int16_t cx = x + w / 2;
-  const int16_t cy = y + h / 2 + vh / 2 + 6;
+  const int16_t cy = y + h / 2 + vh / 2 + 4;
   drawCentered(value_font, cx, cy, value);
 }
 
-void drawStatusBar(Telemetry::Freshness f, bool linked) {
+/**
+ * Metric cell with sparkline + avg/hi/lo (HR / cadence style).
+ * Layout: label, big value, sparkline strip, stats line.
+ */
+void drawTrendCell(int16_t x, int16_t y, int16_t w, int16_t h,
+                   const char *label, const char *value,
+                   const MetricSeries &series, bool show_stats) {
+  display.drawRect(x, y, w, h, GxEPD_BLACK);
+  display.drawRect(x + 1, y + 1, w - 2, h - 2, GxEPD_BLACK);
+
+  drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + 18, label);
+
+  const int16_t spark_h = 36;
+  const int16_t stats_h = 18;
+
+  int16_t vw, vh;
+  textSize(&FreeSansBold24pt7b, value, &vw, &vh);
+  drawCentered(&FreeSansBold24pt7b, x + w / 2, y + 28 + vh + 8, value);
+
+  const int16_t sx = x + 8;
+  const int16_t sy = y + h - spark_h - stats_h - 4;
+  const int16_t sw = w - 16;
+  if (show_stats && series.count >= 2) {
+    drawSparkline(sx, sy, sw, spark_h, series);
+    uint8_t avg = 0, lo = 0, hi = 0;
+    series.stats(&avg, &lo, &hi);
+    char stats[40];
+    snprintf(stats, sizeof(stats), "avg %u  hi %u  lo %u", avg, hi, lo);
+    drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + h - 8, stats);
+  } else {
+    display.drawRect(sx, sy, sw, spark_h, GxEPD_BLACK);
+    drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + h - 8, "avg --  hi --  lo --");
+  }
+}
+
+// Status bar height (shared with page layouts)
+constexpr int16_t kStatusH = 48;
+
+void drawStatusBar(const Telemetry &tel, Telemetry::Freshness f, bool linked) {
   const int16_t W = display.width();
-  // Top bar height 44
-  display.drawRect(0, 0, W, 44, GxEPD_BLACK);
-  display.drawRect(1, 1, W - 2, 42, GxEPD_BLACK);
+  display.drawRect(0, 0, W, kStatusH, GxEPD_BLACK);
+  display.drawRect(1, 1, W - 2, kStatusH - 2, GxEPD_BLACK);
 
-  drawLabelLeft(&FreeSansBold12pt7b, 12, 30, "BikeHUD");
+  // Left: "BikeHUD" + optional wall clock from hub
+  drawLabelLeft(&FreeSansBold12pt7b, 10, 20, "BikeHUD");
+  if (tel.clock_valid) {
+    char when[32];
+    formatWallClock(when, sizeof(when), tel);
+    if (when[0]) {
+      drawLabelLeft(&FreeSansBold9pt7b, 10, 40, when);
+    }
+  }
 
-  // Freshness = packet age; LINK/ADV = BLE central connected vs advertising.
+  // Right: freshness · link
   char right[28];
   snprintf(right, sizeof(right), "%s · %s", freshnessLabel(f),
            linked ? "LINK" : "ADV");
   int16_t rw, rh;
   textSize(&FreeSansBold12pt7b, right, &rw, &rh);
-  // Prefer full "WAITING · ADV"; shrink font only if it won't fit.
   const GFXfont *rf = &FreeSansBold12pt7b;
-  if (rw > W / 2) {
+  if (rw > W / 2 - 8) {
     textSize(&FreeSansBold9pt7b, right, &rw, &rh);
     rf = &FreeSansBold9pt7b;
   }
-  drawLabelLeft(rf, W - rw - 12, 30, right);
+  drawLabelLeft(rf, W - rw - 10, 30, right);
 }
 
 void paintPage0(const Telemetry &tel, bool show_values) {
@@ -309,8 +413,8 @@ void paintPage0(const Telemetry &tel, bool show_values) {
   const int16_t H = display.height();
 
   // Hero panel under status bar
-  const int16_t hero_y = 44;
-  const int16_t hero_h = 300;
+  const int16_t hero_y = kStatusH;
+  const int16_t hero_h = 280;
   display.drawRect(0, hero_y, W, hero_h, GxEPD_BLACK);
   display.drawRect(1, hero_y + 1, W - 2, hero_h - 2, GxEPD_BLACK);
 
@@ -336,7 +440,7 @@ void paintPage0(const Telemetry &tel, bool show_values) {
   const int16_t cell_w = W / 2;
   const int16_t cell_h = grid_h / 2;
 
-  char hr[12], time_s[16], cad[12], dist[16];
+  char hr[12], dur[16], cad[12], dist[16];
 
   if (show_values && (tel.packet.flags & BIKE_HUD_FLAG_HR_VALID)) {
     snprintf(hr, sizeof(hr), "%u", tel.packet.hr_bpm);
@@ -345,9 +449,9 @@ void paintPage0(const Telemetry &tel, bool show_values) {
   }
 
   if (show_values) {
-    formatElapsed(time_s, sizeof(time_s), tel.packet.elapsed_s);
+    formatElapsed(dur, sizeof(dur), tel.packet.elapsed_s);
   } else {
-    snprintf(time_s, sizeof(time_s), "--:--");
+    snprintf(dur, sizeof(dur), "--:--");
   }
 
   if (show_values && (tel.packet.flags & BIKE_HUD_FLAG_CADENCE_VALID) &&
@@ -363,11 +467,12 @@ void paintPage0(const Telemetry &tel, bool show_values) {
     snprintf(dist, sizeof(dist), "--.--");
   }
 
-  drawMetricCell(0, grid_y, cell_w, cell_h, "HR", hr, &FreeSansBold24pt7b);
-  drawMetricCell(cell_w - 1, grid_y, cell_w + 1, cell_h, "TIME", time_s,
+  drawTrendCell(0, grid_y, cell_w, cell_h, "HEART RATE", hr, tel.hr_hist,
+                show_values);
+  drawMetricCell(cell_w - 1, grid_y, cell_w + 1, cell_h, "DURATION", dur,
                  &FreeSansBold24pt7b);
-  drawMetricCell(0, grid_y + cell_h - 1, cell_w, cell_h + 1, "CAD", cad,
-                 &FreeSansBold24pt7b);
+  drawTrendCell(0, grid_y + cell_h - 1, cell_w, cell_h + 1, "CADENCE", cad,
+                tel.cad_hist, show_values);
   drawMetricCell(cell_w - 1, grid_y + cell_h - 1, cell_w + 1, cell_h + 1,
                  distanceLabel(), dist, &FreeSansBold24pt7b);
 }
@@ -375,7 +480,7 @@ void paintPage0(const Telemetry &tel, bool show_values) {
 void paintPage1(const Telemetry &tel, bool show_values) {
   const int16_t W = display.width();
   const int16_t H = display.height();
-  const int16_t top = 44;
+  const int16_t top = kStatusH;
   const int16_t body_h = H - top;
   const int16_t cell_w = W / 2;
   const int16_t cell_h = body_h / 2;
@@ -430,7 +535,7 @@ void paintPage1(const Telemetry &tel, bool show_values) {
 void paintPage2(const Telemetry &tel, Telemetry::Freshness f, bool linked) {
   const int16_t W = display.width();
   const int16_t H = display.height();
-  const int16_t top = 44;
+  const int16_t top = kStatusH;
 
   display.drawRect(0, top, W, H - top, GxEPD_BLACK);
   display.drawRect(1, top + 1, W - 2, H - top - 2, GxEPD_BLACK);
@@ -495,7 +600,7 @@ void paintFrame(const Telemetry &tel, Telemetry::Freshness f, bool linked,
   display.firstPage();
   do {
     display.fillScreen(GxEPD_WHITE);
-    drawStatusBar(f, linked);
+    drawStatusBar(tel, f, linked);
 
     const bool show =
         (f == Telemetry::Freshness::Live || f == Telemetry::Freshness::Weak);

@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 56;
+	objectVersion = 60;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -61,6 +61,14 @@
 			path = BikeHudApp;
 			sourceTree = "<group>";
 		};
+		A50000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000009 /* BikeHudApp.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
 		A50000000000000000000004 /* Services */ = {
 			isa = PBXGroup;
 			children = (
@@ -69,14 +77,6 @@
 				A20000000000000000000005 /* RideController.swift */,
 			);
 			path = Services;
-			sourceTree = "<group>";
-		};
-		A50000000000000000000003 /* Products */ = {
-			isa = PBXGroup;
-			children = (
-				A20000000000000000000009 /* BikeHudApp.app */,
-			);
-			name = Products;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -208,7 +208,7 @@
 				CODE_SIGN_ENTITLEMENTS = BikeHudApp/BikeHudApp.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = VT6SY9HYV9;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = BikeHudApp/Info.plist;
@@ -218,7 +218,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.nick.bikehud;
+				PRODUCT_BUNDLE_IDENTIFIER = com.k5njm.bikehud;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -236,7 +236,7 @@
 				CODE_SIGN_ENTITLEMENTS = BikeHudApp/BikeHudApp.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = VT6SY9HYV9;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = BikeHudApp/Info.plist;
@@ -246,7 +246,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.nick.bikehud;
+				PRODUCT_BUNDLE_IDENTIFIER = com.k5njm.bikehud;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;

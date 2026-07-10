@@ -1,9 +1,10 @@
 # Bike HUD BLE protocol
 
-**Version:** 1  
+**Version:** 1 (16 B) or **2** (24 B with wall clock)  
 **Endianness:** little-endian  
-**Packet size:** 16 bytes, fixed  
 **Role:** Apple hub (Central) → X4 (Peripheral)
+
+Hubs should write **v2**. X4 accepts v1 or v2.
 
 ## UUIDs
 
@@ -38,6 +39,22 @@
 | 14 | `u8` | `hub_type` | `0` unknown, `1` iPhone, `2` Apple Watch |
 | 15 | `u8` | `reserved` | Write `0` |
 
+### Packet v2 trailer (bytes 16–23, only when `version == 2`)
+
+Local wall clock from the hub (timezone already applied):
+
+| Offset | Type | Field | Notes |
+|---|---|---|---|
+| 16 | `u16` | `year` | e.g. 2026 |
+| 18 | `u8` | `month` | 1–12 |
+| 19 | `u8` | `day` | 1–31 |
+| 20 | `u8` | `hour` | 0–23 |
+| 21 | `u8` | `minute` | 0–59 |
+| 22 | `u8` | `second` | 0–59 |
+| 23 | `u8` | `day_of_week` | 0 = Sunday … 6 = Saturday |
+
+Set `FLAG_CLOCK_VALID` when the trailer is trustworthy.
+
 Canonical C layout: [`bike_hud_protocol.h`](bike_hud_protocol.h).  
 Swift mirror: `ios/BikeHudProtocol`.
 
@@ -50,7 +67,8 @@ Swift mirror: `ios/BikeHudProtocol`.
 | 2 | `FLAG_GPS_VALID` | Speed/distance/elev from a fix, not dead-reckoning only |
 | 3 | `FLAG_PAUSED` | Workout paused — HUD may show pause chrome |
 | 4 | `FLAG_LIVE` | Active live workout session (always set when streaming) |
-| 5–7 | reserved | Must be 0 in v1 |
+| 5 | `FLAG_CLOCK_VALID` | v2 wall-clock trailer is valid |
+| 6–7 | reserved | Must be 0 |
 
 ## Stale rules (X4)
 

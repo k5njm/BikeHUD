@@ -29,24 +29,44 @@ class ServerCallbacks : public NimBLEServerCallbacks {
 class TelemetryCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic *c, NimBLEConnInfo & /*connInfo*/) override {
     const NimBLEAttValue &value = c->getValue();
-    if (value.size() != BIKE_HUD_PACKET_V1_SIZE) {
-      Serial.printf("[ble] bad write len %u (want %u)\n",
-                    (unsigned)value.size(), (unsigned)BIKE_HUD_PACKET_V1_SIZE);
+    const size_t n = value.size();
+
+    if (n != BIKE_HUD_PACKET_V1_SIZE && n != BIKE_HUD_PACKET_V2_SIZE) {
+      Serial.printf("[ble] bad write len %u (want %u or %u)\n", (unsigned)n,
+                    (unsigned)BIKE_HUD_PACKET_V1_SIZE,
+                    (unsigned)BIKE_HUD_PACKET_V2_SIZE);
+      return;
+    }
+
+    if (n == BIKE_HUD_PACKET_V2_SIZE) {
+      BikeHudPacketV2 pkt;
+      memcpy(&pkt, value.data(), sizeof(pkt));
+      if (!bike_hud_packet_version_ok(&pkt.body)) {
+        Serial.printf("[ble] unknown version %u\n", pkt.body.version);
+        return;
+      }
+      // Prefer v2 clock only when version says so.
+      if (pkt.body.version == BIKE_HUD_PROTOCOL_VERSION_V2) {
+        g_telemetry.apply_v2(pkt, millis());
+      } else {
+        g_telemetry.apply(pkt.body, millis());
+      }
+      Serial.printf("[ble] pkt #%lu v%u spd=%u hr=%u\n",
+                    (unsigned long)g_telemetry.write_count, pkt.body.version,
+                    pkt.body.speed_cm_s, pkt.body.hr_bpm);
       return;
     }
 
     BikeHudPacketV1 pkt;
     memcpy(&pkt, value.data(), sizeof(pkt));
-
     if (!bike_hud_packet_version_ok(&pkt)) {
       Serial.printf("[ble] unknown version %u\n", pkt.version);
       return;
     }
-
     g_telemetry.apply(pkt, millis());
-    Serial.printf("[ble] pkt #%lu spd=%u cm/s hr=%u flags=0x%02x\n",
+    Serial.printf("[ble] pkt #%lu v1 spd=%u hr=%u\n",
                   (unsigned long)g_telemetry.write_count, pkt.speed_cm_s,
-                  pkt.hr_bpm, pkt.flags);
+                  pkt.hr_bpm);
   }
 } g_telem_cbs;
 
@@ -58,7 +78,6 @@ void ble_service_begin() {
     return;
   }
 
-  // ~+3 dBm; avoid max TX on a small battery pack.
   NimBLEDevice::setPower(3);
 
   g_server = NimBLEDevice::createServer();
@@ -73,13 +92,12 @@ void ble_service_begin() {
 
   g_telem_char->setCallbacks(&g_telem_cbs);
 
-  BikeHudPacketV1 empty{};
-  empty.version = BIKE_HUD_PROTOCOL_VERSION;
-  empty.cadence_rpm = BIKE_HUD_UNKNOWN_U8;
-  empty.batt_pct = BIKE_HUD_UNKNOWN_U8;
-  empty.gps_acc_m = BIKE_HUD_UNKNOWN_U8;
+  BikeHudPacketV2 empty{};
+  empty.body.version = BIKE_HUD_PROTOCOL_VERSION_V2;
+  empty.body.cadence_rpm = BIKE_HUD_UNKNOWN_U8;
+  empty.body.batt_pct = BIKE_HUD_UNKNOWN_U8;
+  empty.body.gps_acc_m = BIKE_HUD_UNKNOWN_U8;
   g_telem_char->setValue((uint8_t *)&empty, sizeof(empty));
-  // NimBLE 2.x starts services when advertising begins; no svc->start().
 
   NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
   adv->setName(BIKE_HUD_DEVICE_NAME);
@@ -90,8 +108,6 @@ void ble_service_begin() {
   Serial.println("[ble] advertising as " BIKE_HUD_DEVICE_NAME);
 }
 
-void ble_service_loop() {
-  // NimBLE is callback-driven; nothing required.
-}
+void ble_service_loop() {}
 
 bool ble_service_is_connected() { return g_connected; }

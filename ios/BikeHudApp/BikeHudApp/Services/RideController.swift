@@ -158,7 +158,11 @@ final class RideController: ObservableObject {
         var flags: BikeHudPacketV1.Flags = [.live, .gpsValid, .hrValid, .cadenceValid]
         if paused { flags.insert(.paused) }
 
+        // Vary HR and cadence so X4 sparklines show movement in demo mode.
         let hr = UInt8(120 + Int(demoElapsed % 40))
+        let cad: UInt8 = paused
+            ? BikeHudPacketV1.unknownU8
+            : UInt8(78 + Int(demoElapsed % 20))
 
         return BikeHudPacketV1(
             flags: flags,
@@ -166,11 +170,12 @@ final class RideController: ObservableObject {
             distanceMeters: demoDistanceM,
             elapsedSeconds: demoElapsed,
             heartRateBpm: hr,
-            cadenceRpm: paused ? BikeHudPacketV1.unknownU8 : 84,
+            cadenceRpm: cad,
             elevationMeters: 200 + Int16(demoElapsed % 80),
             batteryPercent: hubBatteryPercent(),
             gpsAccuracyMeters: 5,
-            hubType: .iPhone
+            hubType: .iPhone,
+            wallClock: .now()
         )
     }
 
@@ -192,7 +197,8 @@ final class RideController: ObservableObject {
             elevationMeters: location.elevationMetersI16,
             batteryPercent: hubBatteryPercent(),
             gpsAccuracyMeters: location.gpsAccuracyU8,
-            hubType: .iPhone
+            hubType: .iPhone,
+            wallClock: .now()
         )
     }
 

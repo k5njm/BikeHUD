@@ -26,10 +26,10 @@
 	<string>Bike HUD connects to your Xteink X4 display over Bluetooth to stream ride metrics.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>Bike HUD connects to your Xteink X4 display over Bluetooth to stream ride metrics.</string>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Location provides speed, distance, and elevation for the bike display during a GPS ride.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Location keeps updating the bike display if you switch apps mid-ride.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Location provides speed, distance, and elevation for the bike display during a GPS ride.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-central</string>
