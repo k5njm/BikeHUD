@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import BikeHudProtocol
 
 struct ContentView: View {
@@ -21,15 +22,29 @@ struct ContentView: View {
                             .font(.caption)
                             .foregroundStyle(.red)
                     }
-                    HStack {
-                        Button(ride.isHudReady ? "Reconnect" : "Connect BikeHUD") {
+                    HStack(spacing: 12) {
+                        Button {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                             ride.connectHud()
+                        } label: {
+                            HStack(spacing: 8) {
+                                if isBleBusy {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                        .tint(.white)
+                                }
+                                Text(connectButtonTitle)
+                            }
+                            .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
-                        .disabled(isBleBusy)
+                        // Keep enabled so the press highlights; ignore taps while busy.
+                        .opacity(isBleBusy ? 0.85 : 1.0)
+                        .allowsHitTesting(!isBleBusy)
 
                         if ride.isHudReady || isConnectedish {
                             Button("Disconnect", role: .destructive) {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                 ride.disconnectHud()
                             }
                             .buttonStyle(.bordered)
@@ -167,6 +182,21 @@ struct ContentView: View {
         switch ride.ble.state {
         case .scanning, .connecting: return true
         default: return false
+        }
+    }
+
+    private var connectButtonTitle: String {
+        switch ride.ble.state {
+        case .scanning:
+            return "Scanning…"
+        case .connecting:
+            return "Connecting…"
+        case .ready:
+            return "Reconnect"
+        case .failed:
+            return "Retry Connect"
+        default:
+            return "Connect BikeHUD"
         }
     }
 

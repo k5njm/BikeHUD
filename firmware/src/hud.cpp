@@ -446,8 +446,9 @@ void drawTrendCell(int16_t x, int16_t y, int16_t w, int16_t h,
   const int16_t baseline = value_top + value_h / 2 + vh / 3;
   drawCentered(&FreeSansBold24pt7b, x + w / 2, baseline, value);
 
+  // Nudge chart + stats up 2px for air above the cell bottom border.
   const int16_t sx = x + 6;
-  const int16_t sy = y + h - spark_h - stats_h - 2;
+  const int16_t sy = y + h - spark_h - stats_h - 4;
   const int16_t sw = w - 12;
   // Chart keeps last samples even when stale; only hide live number via value.
   if (series.count >= 2) {
@@ -456,10 +457,10 @@ void drawTrendCell(int16_t x, int16_t y, int16_t w, int16_t h,
     series.stats(&avg, &lo, &hi);
     char stats[40];
     snprintf(stats, sizeof(stats), "avg %u  hi %u  lo %u", avg, hi, lo);
-    drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + h - 3, stats);
+    drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + h - 5, stats);
   } else {
     display.drawRect(sx, sy, sw, spark_h, GxEPD_BLACK);
-    drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + h - 3, "avg --  hi --  lo --");
+    drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + h - 5, "avg --  hi --  lo --");
   }
   (void)show_stats;
   (void)kLabelPad;
