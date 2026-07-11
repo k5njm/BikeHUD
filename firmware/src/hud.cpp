@@ -27,6 +27,7 @@ uint16_t g_partials_since_full = 0;
 Telemetry::Freshness g_last_fresh = Telemetry::Freshness::Empty;
 bool g_last_ble_linked = false;
 bool g_page_dirty = false;
+uint8_t g_last_clock_minute = 255; // force first clock paint
 
 // Partial updates leave faint "ghost" residual. Full waveform (invert flash)
 // clears it — but is only needed after many partials, not on a static desk
@@ -319,16 +320,22 @@ static const char *const kMonthAbbrev[] = {
     "???", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
-void formatWallClock(char *buf, size_t n, const Telemetry &tel) {
-  if (!tel.clock_valid || tel.month < 1 || tel.month > 12 ||
-      tel.day_of_week > 6) {
+void formatWallClock(char *buf, size_t n, const Telemetry &tel,
+                     uint32_t now_ms) {
+  if (!tel.clock.valid) {
+    buf[0] = '\0';
+    return;
+  }
+  uint16_t y;
+  uint8_t mo, d, h, mi, s, dow;
+  tel.clock.snapshot(now_ms, &y, &mo, &d, &h, &mi, &s, &dow);
+  if (mo < 1 || mo > 12 || dow > 6) {
     buf[0] = '\0';
     return;
   }
   // "Fri Jul 10 · 18:34"
-  snprintf(buf, n, "%s %s %u · %02u:%02u", kDowAbbrev[tel.day_of_week],
-           kMonthAbbrev[tel.month], (unsigned)tel.day, (unsigned)tel.hour,
-           (unsigned)tel.minute);
+  snprintf(buf, n, "%s %s %u · %02u:%02u", kDowAbbrev[dow], kMonthAbbrev[mo],
+           (unsigned)d, (unsigned)h, (unsigned)mi);
 }
 
 /**
@@ -394,41 +401,31 @@ void drawSparkline(int16_t x, int16_t y, int16_t w, int16_t h,
   }
 }
 
-/** Label + 7-segment value, vertically centered in the free area under the label. */
-void drawMetricCell7(int16_t x, int16_t y, int16_t w, int16_t h,
-                     const char *label, const char *value) {
-  display.drawRect(x, y, w, h, GxEPD_BLACK);
-  display.drawRect(x + 1, y + 1, w - 2, h - 2, GxEPD_BLACK);
+// Shared label inset so left/right cells match (air under the top border).
+// FreeSansBold9pt ascent ~11px; baseline = cell_y + kLabelPad + ascent.
+constexpr int16_t kLabelPad = 8;
+constexpr int16_t kLabelBaseline = 20; // from cell top → ~8px clear above glyphs
 
-  const int16_t label_h = 22;
-  drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + 16, label);
-
-  // Value band: full remaining height — drawHeroNumber centers inside it.
-  drawHeroNumber(x + 4, y + label_h, w - 8, h - label_h - 6, value);
-}
-
-/** Sans value (duration etc.) centered in free area under label. */
+/** Sans-serif metric cell: label + centered value. */
 void drawMetricCellText(int16_t x, int16_t y, int16_t w, int16_t h,
                         const char *label, const char *value,
                         const GFXfont *value_font) {
   display.drawRect(x, y, w, h, GxEPD_BLACK);
   display.drawRect(x + 1, y + 1, w - 2, h - 2, GxEPD_BLACK);
 
-  const int16_t label_h = 22;
-  drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + 16, label);
+  drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + kLabelBaseline, label);
 
   int16_t vw, vh;
   textSize(value_font, value, &vw, &vh);
-  const int16_t band_y = y + label_h;
-  const int16_t band_h = h - label_h;
-  // GFX FreeFont cursor is baseline — place mid-band.
+  const int16_t band_y = y + kLabelBaseline + 6;
+  const int16_t band_h = h - (kLabelBaseline + 6);
   const int16_t baseline = band_y + band_h / 2 + vh / 3;
   drawCentered(value_font, x + w / 2, baseline, value);
 }
 
 /**
- * Trend cell: label, 7-seg value (middle band), hatched area chart, stats.
- * Bands are fixed fractions so digits never collide with the chart.
+ * Trend cell: sans value + hatched area chart + avg/hi/lo.
+ * History is kept across WEAK/STALE so reconnect resumes the map smoothly.
  */
 void drawTrendCell(int16_t x, int16_t y, int16_t w, int16_t h,
                    const char *label, const char *value,
@@ -436,28 +433,24 @@ void drawTrendCell(int16_t x, int16_t y, int16_t w, int16_t h,
   display.drawRect(x, y, w, h, GxEPD_BLACK);
   display.drawRect(x + 1, y + 1, w - 2, h - 2, GxEPD_BLACK);
 
-  const int16_t label_h = 18;
   const int16_t stats_h = 14;
-  const int16_t spark_h = 48;
-  // Cap digit band so 3-digit HR stays readable and clear of the chart.
-  int16_t value_h = h - label_h - spark_h - stats_h - 6;
-  if (value_h > 72)
-    value_h = 72;
-  if (value_h < 36)
-    value_h = 36;
+  const int16_t spark_h = 44;
+  const int16_t value_top = y + kLabelBaseline + 8;
+  const int16_t value_bottom = y + h - spark_h - stats_h - 4;
+  const int16_t value_h = value_bottom - value_top;
 
-  drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + 14, label);
+  drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + kLabelBaseline, label);
 
-  // Vertically center the digit band between label and chart.
-  const int16_t gap_above_chart =
-      h - label_h - stats_h - spark_h - value_h - 4;
-  const int16_t value_y = y + label_h + (gap_above_chart > 0 ? gap_above_chart / 2 : 0);
-  drawHeroNumber(x + 6, value_y, w - 12, value_h, value);
+  int16_t vw, vh;
+  textSize(&FreeSansBold24pt7b, value, &vw, &vh);
+  const int16_t baseline = value_top + value_h / 2 + vh / 3;
+  drawCentered(&FreeSansBold24pt7b, x + w / 2, baseline, value);
 
   const int16_t sx = x + 6;
   const int16_t sy = y + h - spark_h - stats_h - 2;
   const int16_t sw = w - 12;
-  if (show_stats && series.count >= 2) {
+  // Chart keeps last samples even when stale; only hide live number via value.
+  if (series.count >= 2) {
     drawSparkline(sx, sy, sw, spark_h, series);
     uint8_t avg = 0, lo = 0, hi = 0;
     series.stats(&avg, &lo, &hi);
@@ -468,6 +461,8 @@ void drawTrendCell(int16_t x, int16_t y, int16_t w, int16_t h,
     display.drawRect(sx, sy, sw, spark_h, GxEPD_BLACK);
     drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + h - 3, "avg --  hi --  lo --");
   }
+  (void)show_stats;
+  (void)kLabelPad;
 }
 
 // Single-line status; FreeFont baseline must clear glyph ascent.
@@ -478,16 +473,12 @@ void drawStatusBar(const Telemetry &tel, Telemetry::Freshness f, bool linked) {
   display.fillRect(0, 0, W, kStatusH, GxEPD_WHITE);
   display.drawFastHLine(0, kStatusH - 1, W, GxEPD_BLACK);
 
-  // Left: "BikeHUD  Fri Jul 10 · 18:34"
+  // Left: "BikeHUD  Fri Jul 10 · 18:34" (clock free-runs after TIME_SYNC)
   char left[48];
-  if (tel.clock_valid) {
-    char when[28];
-    formatWallClock(when, sizeof(when), tel);
-    if (when[0]) {
-      snprintf(left, sizeof(left), "BikeHUD  %s", when);
-    } else {
-      snprintf(left, sizeof(left), "BikeHUD");
-    }
+  char when[28];
+  formatWallClock(when, sizeof(when), tel, millis());
+  if (when[0]) {
+    snprintf(left, sizeof(left), "BikeHUD  %s", when);
   } else {
     snprintf(left, sizeof(left), "BikeHUD");
   }
@@ -568,8 +559,8 @@ void paintPage0(const Telemetry &tel, bool show_values) {
                      &FreeSansBold24pt7b);
   drawTrendCell(0, grid_y + cell_h - 1, cell_w, cell_h + 1, "CADENCE", cad,
                 tel.cad_hist, show_values);
-  drawMetricCell7(cell_w - 1, grid_y + cell_h - 1, cell_w + 1, cell_h + 1,
-                  distanceLabel(), dist);
+  drawMetricCellText(cell_w - 1, grid_y + cell_h - 1, cell_w + 1, cell_h + 1,
+                     distanceLabel(), dist, &FreeSansBold24pt7b);
 }
 
 void paintPage1(const Telemetry &tel, bool show_values) {
@@ -618,9 +609,12 @@ void paintPage1(const Telemetry &tel, bool show_values) {
     snprintf(hub, sizeof(hub), "--");
   }
 
-  drawMetricCell7(0, top, cell_w, cell_h, elevLabel(), elev);
-  drawMetricCell7(cell_w - 1, top, cell_w + 1, cell_h, avgLabel(), avg);
-  drawMetricCell7(0, top + cell_h - 1, cell_w, cell_h + 1, "HUB BATT", batt);
+  drawMetricCellText(0, top, cell_w, cell_h, elevLabel(), elev,
+                     &FreeSansBold24pt7b);
+  drawMetricCellText(cell_w - 1, top, cell_w + 1, cell_h, avgLabel(), avg,
+                     &FreeSansBold24pt7b);
+  drawMetricCellText(0, top + cell_h - 1, cell_w, cell_h + 1, "HUB BATT", batt,
+                     &FreeSansBold24pt7b);
   drawMetricCellText(cell_w - 1, top + cell_h - 1, cell_w + 1, cell_h + 1, "HUB",
                      hub, &FreeSansBold18pt7b);
 }
@@ -741,12 +735,25 @@ void hud_update(const Telemetry &tel, uint32_t now_ms, bool ble_linked) {
   const bool link_changed = ble_linked != g_last_ble_linked;
   const bool page_changed = g_page_dirty;
 
+  // Tick status-bar clock once per minute without needing telemetry writes.
+  bool clock_tick = false;
+  if (tel.clock.valid) {
+    uint16_t y;
+    uint8_t mo, d, h, mi, s, dow;
+    tel.clock.snapshot(now_ms, &y, &mo, &d, &h, &mi, &s, &dow);
+    if (mi != g_last_clock_minute) {
+      clock_tick = true;
+      g_last_clock_minute = mi;
+    }
+  }
+
   // Ghost cleanup only after real partial activity — never on idle WAITING.
   const bool due_full =
       g_partials_since_full >= kPartialsBeforeFull &&
       (now_ms - g_last_full_ms) >= kFullRefreshIntervalMs;
 
-  bool dirty = page_changed || fresh_changed || link_changed || due_full;
+  bool dirty =
+      page_changed || fresh_changed || link_changed || due_full || clock_tick;
   if (new_packet) {
     if (g_last_drawn_ms == 0 ||
         (now_ms - g_last_drawn_ms) >= kMinPartialIntervalMs) {

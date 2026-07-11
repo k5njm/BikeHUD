@@ -27,21 +27,34 @@ final class RideController: ObservableObject {
     @Published private(set) var demoNote: String = ""
 
     private var tickTimer: Timer?
+    private var clockTimer: Timer?
     private var sessionStartedAt: Date?
     private var pausedAccumulated: TimeInterval = 0
     private var pauseBeganAt: Date?
+    private var lastTimeSyncAt: Date?
 
     // Demo synthetic ride state
     private var demoElapsed: UInt16 = 0
     private var demoDistanceM: UInt16 = 0
+
+    /// Re-sync wall clock at least this often while connected (HUD free-runs between).
+    private let timeSyncInterval: TimeInterval = 5 * 60
 
     var isHudReady: Bool {
         if case .ready = ble.state { return true }
         return false
     }
 
+    init() {
+        // Poll so we send TIME_SYNC soon after the HUD becomes Ready.
+        clockTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.maybeSyncTime(force: false) }
+        }
+    }
+
     func connectHud() {
         ble.startScanning()
+        // Next Ready transition will be picked up by the clock timer.
     }
 
     func disconnectHud() {
@@ -117,7 +130,22 @@ final class RideController: ObservableObject {
     private func tick() {
         guard session == .running else { return }
         updateElapsed()
+        maybeSyncTime(force: false)
         writeCurrentPacket(paused: false)
+    }
+
+    /// Push a 16-byte TIME_SYNC so the HUD can free-run wall clock.
+    /// Call on connect and about every `timeSyncInterval` while linked.
+    private func maybeSyncTime(force: Bool) {
+        guard isHudReady else { return }
+        if !force, let last = lastTimeSyncAt,
+           Date().timeIntervalSince(last) < timeSyncInterval
+        {
+            return
+        }
+        if ble.writeTimeSync(.now()) {
+            lastTimeSyncAt = Date()
+        }
     }
 
     private func updateElapsed() {
@@ -174,8 +202,7 @@ final class RideController: ObservableObject {
             elevationMeters: 200 + Int16(demoElapsed % 80),
             batteryPercent: hubBatteryPercent(),
             gpsAccuracyMeters: 5,
-            hubType: .iPhone,
-            wallClock: .now()
+            hubType: .iPhone
         )
     }
 
@@ -197,8 +224,7 @@ final class RideController: ObservableObject {
             elevationMeters: location.elevationMetersI16,
             batteryPercent: hubBatteryPercent(),
             gpsAccuracyMeters: location.gpsAccuracyU8,
-            hubType: .iPhone,
-            wallClock: .now()
+            hubType: .iPhone
         )
     }
 

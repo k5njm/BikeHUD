@@ -30,7 +30,7 @@ void demo_tick(uint32_t now_ms) {
   dist = (uint16_t)(elapsed * 7); // ~25 km/h → 7 m/s
 
   BikeHudPacketV1 p{};
-  p.version = BIKE_HUD_PROTOCOL_VERSION_V1;
+  p.version = BIKE_HUD_PROTOCOL_VERSION;
   p.flags = BIKE_HUD_FLAG_LIVE | BIKE_HUD_FLAG_HR_VALID | BIKE_HUD_FLAG_GPS_VALID;
   p.speed_cm_s = 700; // 25.2 km/h
   p.distance_m = dist;
@@ -53,9 +53,9 @@ void setup() {
   delay(200);
   Serial.println();
   Serial.println("=== BikeHUD X4 ===");
-  Serial.printf("protocol v%u  packet v1=%u v2=%u B\n",
+  Serial.printf("protocol v%u  packet %u B (time sync msg 0x%02x)\n",
                 BIKE_HUD_PROTOCOL_VERSION, (unsigned)sizeof(BikeHudPacketV1),
-                (unsigned)sizeof(BikeHudPacketV2));
+                BIKE_HUD_MSG_TIME_SYNC);
   Serial.printf("free heap boot: %u\n", (unsigned)ESP.getFreeHeap());
 
   buttons_begin();

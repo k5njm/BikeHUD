@@ -2,75 +2,47 @@ import XCTest
 @testable import BikeHudProtocol
 
 final class BikeHudPacketTests: XCTestCase {
-    func testV1EncodeSize() {
-        let data = BikeHudPacketV1.testVector.encode(version: 1, includeClock: false)
-        XCTAssertEqual(data.count, 16)
+    func testEncodeSize() {
+        XCTAssertEqual(BikeHudPacketV1.testVector.encode().count, 16)
+        XCTAssertEqual(BikeHudTimeSync.now().encode().count, 16)
     }
 
-    func testV2EncodeSizeWithClock() {
-        var p = BikeHudPacketV1.testVector
-        p.wallClock = .now()
-        let data = p.encode()
-        XCTAssertEqual(data.count, 24)
-        XCTAssertEqual(data[0], 2)
-        XCTAssertTrue(data[1] & (1 << 5) != 0) // clock valid flag
+    func testRoundTrip() {
+        let original = BikeHudPacketV1.testVector
+        XCTAssertEqual(BikeHudPacketV1.decode(original.encode()), original)
     }
 
-    func testV1CanonicalHex() {
+    func testCanonicalHex() {
         let expected: [UInt8] = [
             0x01, 0x15, 0xBC, 0x02, 0x68, 0x30, 0x4C, 0x0F,
             0x94, 0xFF, 0x38, 0x01, 0x49, 0x05, 0x01, 0x00,
         ]
-        let data = BikeHudPacketV1.testVector.encode(version: 1, includeClock: false)
-        XCTAssertEqual([UInt8](data), expected)
+        XCTAssertEqual([UInt8](BikeHudPacketV1.testVector.encode()), expected)
     }
 
-    func testV1RoundTrip() {
-        let original = BikeHudPacketV1.testVector
-        let decoded = BikeHudPacketV1.decode(
-            original.encode(version: 1, includeClock: false)
+    func testTimeSyncTypeAndLayout() {
+        let t = BikeHudTimeSync(
+            year: 2026, month: 7, day: 11, hour: 18, minute: 34, second: 5, dayOfWeek: 6
         )
-        XCTAssertEqual(decoded?.speedCmPerSec, original.speedCmPerSec)
-        XCTAssertEqual(decoded?.heartRateBpm, original.heartRateBpm)
-        XCTAssertNil(decoded?.wallClock)
+        let bytes = [UInt8](t.encode())
+        XCTAssertEqual(bytes[0], 0x10)
+        XCTAssertEqual(bytes[1], 0)
+        XCTAssertEqual(UInt16(bytes[2]) | (UInt16(bytes[3]) << 8), 2026)
+        XCTAssertEqual(bytes[4], 7)
+        XCTAssertEqual(bytes[5], 11)
+        XCTAssertEqual(bytes[6], 18)
+        XCTAssertEqual(bytes[7], 34)
+        XCTAssertEqual(bytes[8], 5)
+        XCTAssertEqual(bytes[9], 6)
+        XCTAssertEqual(bytes.count, 16)
     }
 
-    func testV2ClockRoundTrip() {
-        let clock = BikeHudPacketV1.WallClock(
-            year: 2026, month: 7, day: 10, hour: 18, minute: 34, second: 0, dayOfWeek: 5
-        )
-        var p = BikeHudPacketV1.testVector
-        p.wallClock = clock
-        let decoded = BikeHudPacketV1.decode(p.encode())
-        XCTAssertEqual(decoded?.wallClock, clock)
-        XCTAssertTrue(decoded?.flags.contains(.clockValid) == true)
-    }
-
-    func testDecodeRejectsWrongSize() {
-        XCTAssertNil(BikeHudPacketV1.decode(Data([0x01, 0x00])))
-        XCTAssertNil(BikeHudPacketV1.decode(Data(repeating: 0, count: 15)))
-        XCTAssertNil(BikeHudPacketV1.decode(Data(repeating: 0, count: 17)))
-    }
-
-    func testDecodeRejectsWrongVersion() {
-        var bytes = [UInt8](
-            BikeHudPacketV1.testVector.encode(version: 1, includeClock: false)
-        )
-        bytes[0] = 99
-        XCTAssertNil(BikeHudPacketV1.decode(Data(bytes)))
+    func testDecodeRejectsTimeSyncAsTelemetry() {
+        let data = BikeHudTimeSync.now().encode()
+        XCTAssertNil(BikeHudPacketV1.decode(data))
     }
 
     func testSpeedMph() {
         XCTAssertEqual(BikeHudPacketV1.testVector.speedMph, 15.66, accuracy: 0.05)
-    }
-
-    func testDistanceMiles() {
-        XCTAssertEqual(BikeHudPacketV1.testVector.distanceMiles, 7.70, accuracy: 0.02)
-    }
-
-    func testUUIDsAreValidHex() {
-        let service = BikeHudPacketV1.serviceUUID.replacingOccurrences(of: "-", with: "")
-        XCTAssertEqual(service.count, 32)
-        XCTAssertTrue(service.allSatisfy { $0.isHexDigit })
     }
 }

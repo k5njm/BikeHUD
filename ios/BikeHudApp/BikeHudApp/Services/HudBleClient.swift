@@ -70,21 +70,16 @@ final class HudBleClient: NSObject, ObservableObject {
         lastWriteOK = false
     }
 
-    /// Write one telemetry packet (~1 Hz). Safe if not ready — no-ops.
-    ///
-    /// Default BLE ATT allows only ~20 B for write-without-response until MTU
-    /// is raised. v2 packets are 24 B (include wall clock), so we must use
-    /// write-with-response when the payload exceeds the NR limit — otherwise
-    /// the clock trailer is dropped and the X4 never shows date/time.
+    /// Write 16-byte payload (telemetry or time-sync). Safe if not ready — no-ops.
     @discardableResult
-    func write(_ packet: BikeHudPacketV1) -> Bool {
+    func write(_ data: Data) -> Bool {
         guard let peripheral, let telemetryChar,
               case .ready = state
         else {
             lastWriteOK = false
             return false
         }
-        let data = packet.encode()
+        precondition(data.count == BikeHudPacketV1.size)
         let maxNR = peripheral.maximumWriteValueLength(for: .withoutResponse)
         let canNR = telemetryChar.properties.contains(.writeWithoutResponse)
             && data.count <= maxNR
@@ -93,6 +88,16 @@ final class HudBleClient: NSObject, ObservableObject {
         writeCount += 1
         lastWriteOK = true
         return true
+    }
+
+    @discardableResult
+    func write(_ packet: BikeHudPacketV1) -> Bool {
+        write(packet.encode())
+    }
+
+    @discardableResult
+    func writeTimeSync(_ sync: BikeHudTimeSync = .now()) -> Bool {
+        write(sync.encode())
     }
 
     private func stopScanOnly() {

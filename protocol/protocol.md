@@ -1,10 +1,9 @@
 # Bike HUD BLE protocol
 
-**Version:** 1 (16 B) or **2** (24 B with wall clock)  
+**Telemetry version:** 1  
+**Message size:** **16 bytes fixed** (fits default BLE write-without-response)  
 **Endianness:** little-endian  
 **Role:** Apple hub (Central) → X4 (Peripheral)
-
-Hubs should write **v2**. X4 accepts v1 or v2.
 
 ## UUIDs
 
@@ -14,15 +13,15 @@ Hubs should write **v2**. X4 accepts v1 or v2.
 | Telemetry characteristic (write w/o rsp + read) | `B10E0002-C0C0-41A3-B4C6-42494B454855` |
 | Device name advertisement | `BikeHUD` |
 
-> `B10E…42494B454855` is valid hex (`42494B45` = ASCII `BIKE`). Randomize fully only if a collision ever shows up in the wild.
-
 ## Characteristic usage
 
-- **Properties:** `writeWithoutResponse`, `read` (optional `notify` later for X4→hub status).
-- Phone/Watch **writes** one full 16-byte `BikeHudPacketV1` about **1 Hz** while a workout is live.
-- X4 stamps `recv_ms` on every successful parse; does not ACK.
+- **Properties:** `writeWithoutResponse`, `read` (and `write` as fallback).
+- Two **message types** share the same 16-byte characteristic; discriminated by byte 0:
+  - `0x01` — telemetry (~1 Hz while a workout is live)
+  - `0x10` — wall-clock sync (on connect, then occasionally)
+- X4 does not ACK. Telemetry stamps `recv_ms`; time sync sets a free-running software clock.
 
-## Packet `BikeHudPacketV1` (16 bytes)
+## Packet `BikeHudPacketV1` — telemetry (version = `1`)
 
 | Offset | Type | Field | Unit / notes |
 |---|---|---|---|
@@ -30,33 +29,14 @@ Hubs should write **v2**. X4 accepts v1 or v2.
 | 1 | `u8` | `flags` | Bitfield (below) |
 | 2 | `u16` | `speed_cm_s` | Instantaneous speed, centimetres/second |
 | 4 | `u16` | `distance_m` | Ride distance, metres |
-| 6 | `u16` | `elapsed_s` | Elapsed workout seconds (includes pauses if you want wall clock; prefer moving time and set paused flag) |
+| 6 | `u16` | `elapsed_s` | Elapsed workout seconds (DURATION on HUD) |
 | 8 | `u8` | `hr_bpm` | Heart rate; valid only if `FLAG_HR_VALID` |
 | 9 | `u8` | `cadence_rpm` | RPM; `0xFF` = unknown; valid only if `FLAG_CADENCE_VALID` |
-| 10 | `i16` | `elev_m` | Elevation metres (GPS or baro on hub) |
+| 10 | `i16` | `elev_m` | Elevation metres |
 | 12 | `u8` | `batt_pct` | Hub battery 0–100; `0xFF` = unknown |
 | 13 | `u8` | `gps_acc_m` | Horizontal accuracy metres; `0xFF` = unknown |
 | 14 | `u8` | `hub_type` | `0` unknown, `1` iPhone, `2` Apple Watch |
 | 15 | `u8` | `reserved` | Write `0` |
-
-### Packet v2 trailer (bytes 16–23, only when `version == 2`)
-
-Local wall clock from the hub (timezone already applied):
-
-| Offset | Type | Field | Notes |
-|---|---|---|---|
-| 16 | `u16` | `year` | e.g. 2026 |
-| 18 | `u8` | `month` | 1–12 |
-| 19 | `u8` | `day` | 1–31 |
-| 20 | `u8` | `hour` | 0–23 |
-| 21 | `u8` | `minute` | 0–59 |
-| 22 | `u8` | `second` | 0–59 |
-| 23 | `u8` | `day_of_week` | 0 = Sunday … 6 = Saturday |
-
-Set `FLAG_CLOCK_VALID` when the trailer is trustworthy.
-
-Canonical C layout: [`bike_hud_protocol.h`](bike_hud_protocol.h).  
-Swift mirror: `ios/BikeHudProtocol`.
 
 ### Flags (`flags`)
 
@@ -64,72 +44,55 @@ Swift mirror: `ios/BikeHudProtocol`.
 |---|---|---|
 | 0 | `FLAG_HR_VALID` | `hr_bpm` is trustworthy |
 | 1 | `FLAG_CADENCE_VALID` | `cadence_rpm` is trustworthy (and not `0xFF`) |
-| 2 | `FLAG_GPS_VALID` | Speed/distance/elev from a fix, not dead-reckoning only |
-| 3 | `FLAG_PAUSED` | Workout paused — HUD may show pause chrome |
-| 4 | `FLAG_LIVE` | Active live workout session (always set when streaming) |
-| 5 | `FLAG_CLOCK_VALID` | v2 wall-clock trailer is valid |
-| 6–7 | reserved | Must be 0 |
+| 2 | `FLAG_GPS_VALID` | Speed/distance/elev from a fix |
+| 3 | `FLAG_PAUSED` | Workout paused |
+| 4 | `FLAG_LIVE` | Active live workout session |
+| 5–7 | reserved | Must be 0 |
 
-## Stale rules (X4)
+## Packet `BikeHudTimeSync` — wall clock (version = `0x10`)
 
-Inspired by stravaV10 locator age.
+Still **16 bytes**. Does **not** update ride metrics. HUD stores the instant and free-runs with `millis()` until the next sync (or forever after disconnect — may drift).
 
-| Age since last good packet | HUD behaviour |
+| Offset | Type | Field | Notes |
+|---|---|---|---|
+| 0 | `u8` | `version` | `0x10` (`BIKE_HUD_MSG_TIME_SYNC`) |
+| 1 | `u8` | `flags` | Write `0` |
+| 2 | `u16` | `year` | e.g. 2026 |
+| 4 | `u8` | `month` | 1–12 |
+| 5 | `u8` | `day` | 1–31 |
+| 6 | `u8` | `hour` | 0–23 local |
+| 7 | `u8` | `minute` | 0–59 |
+| 8 | `u8` | `second` | 0–59 |
+| 9 | `u8` | `day_of_week` | 0 = Sunday … 6 = Saturday |
+| 10–15 | `u8[6]` | reserved | Write `0` |
+
+**Hub policy:** send once when the HUD becomes Ready; refresh every ~5 minutes while connected. Telemetry stays pure 16 B @ 1 Hz.
+
+**Design note:** the HUD is still “dumb” for *ride* data (no sensors). Wall clock is optional chrome that survives brief disconnects; after long power-off it simply disappears until the next sync.
+
+## Stale rules (telemetry only)
+
+| Age since last **telemetry** packet | HUD behaviour |
 |---|---|
 | ≤ 5 s | Live numbers |
-| 5–15 s | Show values + “WEAK” status (packet age, not BLE RSSI) |
+| 5–15 s | Values + “WEAK” |
 | \> 15 s | “STALE” — hide live numbers as truth |
 
-Constants: `BIKE_HUD_STALE_WEAK_MS = 5000`, `BIKE_HUD_STALE_HARD_MS = 15000`.  
-Brief e-ink refresh stalls or phone timer jitter can open a multi-second gap even when the radio link is fine.
+HR/cadence **sparklines keep the last samples** across WEAK/STALE so a short gap does not wipe the map; new live samples append again.
 
+Constants: `BIKE_HUD_STALE_WEAK_MS = 5000`, `BIKE_HUD_STALE_HARD_MS = 15000`.
 
 ## Display cadence
 
-- Apply packet immediately on write when fields change.
-- Partial e-ink refresh of digit boxes ~1 Hz max.
-- Full waveform clear every ~45–60 s (ghost cleanup).
-- Page flip on X4 buttons (left/right); not pushed from hub in v1.
+- Apply telemetry on write; partial e-ink ~1 Hz max.
+- Full waveform only after many partials (ghost cleanup).
+- Wall clock redraws about once per minute when set.
 
-## Hub duties (Apple)
-
-1. Single writer only (phone **or** Watch) — see [`docs/hubs.md`](../docs/hubs.md).
-2. Own CSC cadence math, HealthKit HR, Core Location speed/distance.
-3. Keep `version == 1` and set validity flags honestly (no fake zeros for missing HR).
-4. Target ~1 Hz writes; never burst multi-kHz.
-
-## Versioning
-
-- Bump `version` only when size or field semantics break readers.
-- X4 ignores packets with unknown `version` (log + keep last good).
-- Additive fields require v2+ and a negotiated size, not silent extension past 16 bytes.
-
-## Test vector (v1)
-
-All LE. Live phone hub, 25.2 km/h, 12.4 km, 1 h 5 m, HR 148, no cadence, elev 312 m, 73% batt, 5 m GPS chrome.
-
-```
-version     = 01
-flags       = 15   # LIVE|GPS|HR = 0x10|0x04|0x01
-speed_cm_s  = BC 06   # 1724 cm/s ≈ 62.06 km/h wait — use 700 cm/s for 25.2 km/h:
-// Correct: 25.2 km/h = 25.2 * 1000/36 = 700 cm/s → 0x02BC
-distance_m  = 94 30   # 12436? use 12400 m → 0x3068
-elapsed_s   = 4C 0F   # 3916 s ≈ 1h05m
-hr_bpm      = 94
-cadence_rpm = FF
-elev_m      = 38 01   # 312
-batt_pct    = 49
-gps_acc_m   = 05
-hub_type    = 01
-reserved    = 00
-```
-
-Canonical hex dump for automated tests:
+## Test vector (telemetry v1)
 
 ```
 01 15 BC 02 68 30 4C 0F 94 FF 38 01 49 05 01 00
 ```
 
-- speed = 0x02BC = 700 cm/s → 25.2 km/h  
-- distance = 0x3068 = 12392 m ≈ 12.4 km  
-- elapsed = 0x0F4C = 3916 s  
+Canonical C: [`bike_hud_protocol.h`](bike_hud_protocol.h).  
+Swift: `ios/BikeHudProtocol`.
