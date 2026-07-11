@@ -795,3 +795,51 @@ void hud_prev_page() {
 }
 
 uint8_t hud_current_page() { return g_page; }
+
+void hud_force_full_redraw() {
+  g_last_full_ms = 0;
+  g_last_drawn_ms = 0;
+  g_page_dirty = true;
+  g_partials_since_full = kPartialsBeforeFull; // allow due_full path
+}
+
+void hud_show_sleep_splash() {
+  display.setRotation(3);
+  display.setTextColor(GxEPD_BLACK);
+  display.setFullWindow();
+
+  display.firstPage();
+  do {
+    display.fillScreen(GxEPD_WHITE);
+    const int16_t W = display.width();
+    const int16_t H = display.height();
+
+    display.drawRect(12, 12, W - 24, H - 24, GxEPD_BLACK);
+    display.drawRect(14, 14, W - 28, H - 28, GxEPD_BLACK);
+
+    display.setFont(&FreeSansBold24pt7b);
+    const char *title = "BikeHUD";
+    int16_t x1, y1;
+    uint16_t tw, th;
+    display.getTextBounds(title, 0, 0, &x1, &y1, &tw, &th);
+    display.setCursor((W - (int16_t)tw) / 2 - x1, H / 2 - 40);
+    display.print(title);
+
+    display.drawFastHLine(W / 4, H / 2 - 10, W / 2, GxEPD_BLACK);
+
+    display.setFont(&FreeSansBold18pt7b);
+    const char *sleeping = "Sleeping";
+    display.getTextBounds(sleeping, 0, 0, &x1, &y1, &tw, &th);
+    display.setCursor((W - (int16_t)tw) / 2 - x1, H / 2 + 30);
+    display.print(sleeping);
+
+    display.setFont(&FreeSansBold12pt7b);
+    const char *hint = "hold power to wake";
+    display.getTextBounds(hint, 0, 0, &x1, &y1, &tw, &th);
+    display.setCursor((W - (int16_t)tw) / 2 - x1, H / 2 + 70);
+    display.print(hint);
+  } while (display.nextPage());
+
+  // Keep panel powered down between wake events.
+  display.hibernate();
+}

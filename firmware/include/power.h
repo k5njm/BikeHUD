@@ -14,7 +14,8 @@
 constexpr uint32_t kPowerSleepHoldMs = 500;
 
 /**
- * Draw sleep splash, shut down BLE/panel, deep-sleep until power button.
- * Does not return.
+ * Enter sleep: splash + stop BLE. Prefers deep sleep when unplugged;
+ * uses soft-sleep (hold power to wake) when USB would cause instant wake.
+ * Returns after a successful soft-wake.
  */
-void power_enter_sleep() __attribute__((noreturn));
+void power_enter_sleep();

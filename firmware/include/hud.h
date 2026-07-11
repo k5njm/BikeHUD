@@ -18,3 +18,9 @@ void hud_next_page();
 void hud_prev_page();
 
 uint8_t hud_current_page();
+
+/** Full-refresh sleep splash (use existing panel — do not re-init SPI). */
+void hud_show_sleep_splash();
+
+/** Force next hud_update to full-refresh (after soft-wake). */
+void hud_force_full_redraw();

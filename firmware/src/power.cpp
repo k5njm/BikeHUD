@@ -1,99 +1,135 @@
 #include "power.h"
 
 #include "board_pins.h"
-#include "bike_hud_protocol.h"
+#include "ble_service.h"
+#include "buttons.h"
+#include "hud.h"
 
-#include <Fonts/FreeSansBold12pt7b.h>
-#include <Fonts/FreeSansBold18pt7b.h>
-#include <Fonts/FreeSansBold24pt7b.h>
-#include <GxEPD2_BW.h>
 #include <NimBLEDevice.h>
-#include <SPI.h>
+#include <driver/gpio.h>
 #include <esp_sleep.h>
 
-// Same panel instance pattern as hud.cpp — separate object is fine for a
-// one-shot splash before sleep (SPI already configured).
-static GxEPD2_BW<GxEPD2_426_GDEQ0426T82, GxEPD2_426_GDEQ0426T82::HEIGHT>
-    sleep_display(GxEPD2_426_GDEQ0426T82(/*CS=*/PIN_EPD_CS, /*DC=*/PIN_EPD_DC,
-                                        /*RST=*/PIN_EPD_RST,
-                                        /*BUSY=*/PIN_EPD_BUSY));
+/**
+ * Power button = GPIO3, active LOW (same as CrossPoint / FreeInk).
+ *
+ * Deep sleep on ESP32-C3 with USB-Serial/JTAG attached often wakes
+ * immediately (USB activity), which looks like: flash → back to UI.
+ * So we:
+ *  1) Soft-sleep by default (splash + idle loop, wake on long-press)
+ *  2) Optionally try deep sleep when USB is not present
+ *
+ * Soft-sleep still drops BLE and stops the ride UI; e-ink holds the splash.
+ */
 
 namespace {
 
-void draw_sleep_splash() {
-  // Panel may already be inited by hud; re-init is safe enough for shutdown path.
-  pinMode(PIN_EPD_CS, OUTPUT);
-  pinMode(PIN_EPD_DC, OUTPUT);
-  pinMode(PIN_EPD_RST, OUTPUT);
-  pinMode(PIN_EPD_BUSY, INPUT);
-  SPI.begin(PIN_EPD_SCLK, /*MISO*/ -1, PIN_EPD_MOSI, PIN_EPD_CS);
-  sleep_display.init(0, false, 50, false);
-  sleep_display.setRotation(3);
-  sleep_display.setFullWindow();
-  sleep_display.setTextColor(GxEPD_BLACK);
+bool usb_vbus_likely_present() {
+  // Optional USB detect pin on X4 (polarity varies; treat high as "maybe USB").
+  pinMode(PIN_USB_DETECT, INPUT);
+  // Also: if host keeps CDC open, prefer soft-sleep.
+  return digitalRead(PIN_USB_DETECT) == HIGH;
+}
 
-  sleep_display.firstPage();
-  do {
-    sleep_display.fillScreen(GxEPD_WHITE);
-    const int16_t W = sleep_display.width();
-    const int16_t H = sleep_display.height();
+void wait_power_released() {
+  // Debounce: must see HIGH for a stretch before we consider released.
+  uint32_t high_since = 0;
+  while (true) {
+    if (digitalRead(PIN_BTN_POWER) == HIGH) {
+      if (high_since == 0) {
+        high_since = millis();
+      } else if (millis() - high_since > 200) {
+        return;
+      }
+    } else {
+      high_since = 0;
+    }
+    delay(10);
+  }
+}
 
-    // Outer frame
-    sleep_display.drawRect(12, 12, W - 24, H - 24, GxEPD_BLACK);
-    sleep_display.drawRect(14, 14, W - 28, H - 28, GxEPD_BLACK);
+bool try_deep_sleep() {
+  // Configure pull-up so the line idles HIGH while asleep; wake on press (LOW).
+  gpio_num_t pin = (gpio_num_t)PIN_BTN_POWER;
+  gpio_reset_pin(pin);
+  gpio_set_direction(pin, GPIO_MODE_INPUT);
+  gpio_set_pull_mode(pin, GPIO_PULLUP_ONLY);
+  pinMode(PIN_BTN_POWER, INPUT_PULLUP);
 
-    sleep_display.setFont(&FreeSansBold24pt7b);
-    const char *title = "BikeHUD";
-    int16_t x1, y1;
-    uint16_t tw, th;
-    sleep_display.getTextBounds(title, 0, 0, &x1, &y1, &tw, &th);
-    sleep_display.setCursor((W - (int16_t)tw) / 2 - x1, H / 2 - 40);
-    sleep_display.print(title);
+  wait_power_released();
+  delay(250);
 
-    sleep_display.drawFastHLine(W / 4, H / 2 - 10, W / 2, GxEPD_BLACK);
+  // If still low, abort deep sleep (would instant-wake).
+  if (digitalRead(PIN_BTN_POWER) == LOW) {
+    Serial.println("[power] button still low — soft-sleep only");
+    return false;
+  }
 
-    sleep_display.setFont(&FreeSansBold18pt7b);
-    const char *sleeping = "Sleeping";
-    sleep_display.getTextBounds(sleeping, 0, 0, &x1, &y1, &tw, &th);
-    sleep_display.setCursor((W - (int16_t)tw) / 2 - x1, H / 2 + 30);
-    sleep_display.print(sleeping);
+  const uint64_t mask = 1ULL << PIN_BTN_POWER;
+  esp_err_t err =
+      esp_deep_sleep_enable_gpio_wakeup(mask, ESP_GPIO_WAKEUP_GPIO_LOW);
+  if (err != ESP_OK) {
+    Serial.printf("[power] gpio wakeup enable failed: %d\n", (int)err);
+    return false;
+  }
 
-    sleep_display.setFont(&FreeSansBold12pt7b);
-    const char *hint = "hold power to wake";
-    sleep_display.getTextBounds(hint, 0, 0, &x1, &y1, &tw, &th);
-    sleep_display.setCursor((W - (int16_t)tw) / 2 - x1, H / 2 + 70);
-    sleep_display.print(hint);
-  } while (sleep_display.nextPage());
+  Serial.println("[power] deep sleep now");
+  Serial.flush();
+  delay(50);
+  esp_deep_sleep_start();
+  return true; // never reached
+}
 
-  sleep_display.hibernate();
+void soft_sleep_loop() {
+  Serial.println("[power] soft-sleep (hold power ~0.5s to wake)");
+  Serial.flush();
+
+  // Idle until long-press power again.
+  while (true) {
+    delay(30);
+    if (buttons_power_held_ms() < kPowerSleepHoldMs) {
+      continue;
+    }
+    Serial.println("[power] wake long-press detected");
+    wait_power_released();
+    return;
+  }
 }
 
 } // namespace
 
 void power_enter_sleep() {
-  Serial.println("[power] entering deep sleep");
+  Serial.println("[power] sleep requested");
   Serial.flush();
 
-  // Stop BLE so we don't leave the radio half-on.
 #if !defined(BIKE_HUD_DEMO)
+  // Tear down radio before sleeping.
   NimBLEDevice::deinit(true);
 #endif
 
-  draw_sleep_splash();
+  // Splash with the *existing* panel driver (no second GxEPD2 / re-init).
+  hud_show_sleep_splash();
 
-  // Wait for release so the still-held button does not wake us immediately.
-  while (digitalRead(PIN_BTN_POWER) == LOW) {
-    delay(20);
+  wait_power_released();
+  delay(150);
+
+  // Deep sleep only when USB looks absent — otherwise it instant-wakes.
+  const bool try_deep = !usb_vbus_likely_present();
+  if (try_deep) {
+    if (try_deep_sleep()) {
+      // not reached
+    }
+  } else {
+    Serial.println("[power] USB present — using soft-sleep");
   }
-  delay(80);
 
-  // GPIO3 active-low power button → wake on LOW.
-  // ESP32-C3: use gpio wakeup API (not classic ext0).
-  const uint64_t mask = 1ULL << PIN_BTN_POWER;
-  esp_deep_sleep_enable_gpio_wakeup(mask, ESP_GPIO_WAKEUP_GPIO_LOW);
+  // Soft-sleep (or deep-sleep fallback): low-activity loop until long-press.
+  soft_sleep_loop();
 
-  esp_deep_sleep_start();
-  // never returns
-  while (true) {
-  }
+  // Wake path: restore pull-up, BLE, force UI redraw.
+  pinMode(PIN_BTN_POWER, INPUT_PULLUP);
+#if !defined(BIKE_HUD_DEMO)
+  ble_service_begin();
+#endif
+  hud_force_full_redraw();
+  Serial.println("[power] woke (soft-sleep)");
 }

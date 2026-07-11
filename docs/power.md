@@ -18,10 +18,12 @@ mostly off; it is **not** stuck mid-frame unless something else is wrong.
 ## BikeHUD behaviour
 
 1. Long-press power ≥ 500 ms  
-2. Splash: **BikeHUD / Sleeping / hold power to wake**  
+2. Splash: **BikeHUD / Sleeping / hold power to wake** (full e-ink refresh: black → white → splash)  
 3. Wait for button **release** (so wake is not instant)  
-4. `esp_deep_sleep` with wake on GPIO3 low  
-5. Next power press → cold boot → waiting / BLE as usual  
+4. Sleep mode:
+   - **Unplugged:** deep sleep, wake on GPIO3 low → cold boot  
+   - **USB connected:** **soft-sleep** (MCU idle loop). USB-Serial/JTAG on ESP32-C3 often forces an immediate wake from deep sleep, which looked like “flash then back to the ride UI.” Soft-sleep keeps the splash and waits for another long-press.  
+5. Long-press again to wake → BLE restarts → full UI redraw  
 
 Side buttons (page left/right) do not sleep the device.
 
