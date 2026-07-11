@@ -803,7 +803,15 @@ void hud_force_full_redraw() {
   g_partials_since_full = kPartialsBeforeFull; // allow due_full path
 }
 
+void hud_wake_from_sleep() {
+  // After hibernate(), re-init before any paint.
+  display.init(115200, true, 50, false);
+  display.setRotation(3);
+  hud_force_full_redraw();
+}
+
 void hud_show_sleep_splash() {
+  // Ensure panel is awake if we ever call this twice.
   display.setRotation(3);
   display.setTextColor(GxEPD_BLACK);
   display.setFullWindow();
@@ -840,6 +848,5 @@ void hud_show_sleep_splash() {
     display.print(hint);
   } while (display.nextPage());
 
-  // Keep panel powered down between wake events.
   display.hibernate();
 }

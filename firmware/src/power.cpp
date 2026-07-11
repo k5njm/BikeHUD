@@ -6,35 +6,29 @@
 #include "hud.h"
 
 #include <NimBLEDevice.h>
-#include <driver/gpio.h>
-#include <esp_sleep.h>
 
 /**
- * CrossPoint-aligned power path for Xteink X4 / X3 family:
+ * Reliable sleep first; CrossPoint deep-sleep+latch is opt-in later.
  *
- *   - Wait for power button release
- *   - Drive GPIO13 battery latch LOW and hold it through deep sleep
- *     (on battery the MCU is fully powered off; button hard-powers the rail)
- *   - GPIO wake on power button is mainly for USB-powered wake
- *   - Soft-sleep when USB is present (JTAG keeps waking deep sleep)
+ * Deep sleep + GPIO13 latch was bouncing: flash then cold-boot UI (USB-JTAG
+ * and/or latch). Soft-sleep keeps the MCU running in a tight wait, splash on
+ * e-ink, BLE off, until a *new* long-press of power.
  */
 
 namespace {
 
 uint32_t g_last_activity_ms = 0;
 
-bool usb_vbus_likely_present() {
-  pinMode(PIN_USB_DETECT, INPUT);
-  return digitalRead(PIN_USB_DETECT) == HIGH;
-}
+bool power_is_down() { return digitalRead(PIN_BTN_POWER) == LOW; }
 
-void wait_power_released() {
+/** Block until button has been HIGH for `stable_ms`. */
+void wait_power_up_stable(uint32_t stable_ms = 250) {
   uint32_t high_since = 0;
   while (true) {
-    if (digitalRead(PIN_BTN_POWER) == HIGH) {
+    if (!power_is_down()) {
       if (high_since == 0) {
         high_since = millis();
-      } else if (millis() - high_since > 200) {
+      } else if (millis() - high_since >= stable_ms) {
         return;
       }
     } else {
@@ -44,63 +38,29 @@ void wait_power_released() {
   }
 }
 
-void latch_power_rail_off_for_deep_sleep() {
-  // CrossPoint: GPIO13 → battery latch MOSFET, low = cut MCU power on battery.
-  gpio_num_t latch = (gpio_num_t)PIN_PWR_LATCH;
-  gpio_reset_pin(latch);
-  gpio_set_direction(latch, GPIO_MODE_OUTPUT);
-  gpio_set_level(latch, 0);
-  gpio_hold_en(latch);
-  gpio_deep_sleep_hold_en();
-}
-
-bool try_deep_sleep() {
-  pinMode(PIN_BTN_POWER, INPUT_PULLUP);
-  wait_power_released();
-  delay(200);
-
-  if (digitalRead(PIN_BTN_POWER) == LOW) {
-    Serial.println("[power] button still low — skip deep sleep");
-    return false;
-  }
-
-  // Isolate GPIOs; hold latch low across sleep (CrossPoint startDeepSleep).
-  esp_sleep_config_gpio_isolate();
-  latch_power_rail_off_for_deep_sleep();
-
-  gpio_num_t pwr = (gpio_num_t)PIN_BTN_POWER;
-  gpio_reset_pin(pwr);
-  gpio_set_direction(pwr, GPIO_MODE_INPUT);
-  gpio_set_pull_mode(pwr, GPIO_PULLUP_ONLY);
-  pinMode(PIN_BTN_POWER, INPUT_PULLUP);
-
-  const uint64_t mask = 1ULL << PIN_BTN_POWER;
-  esp_err_t err =
-      esp_deep_sleep_enable_gpio_wakeup(mask, ESP_GPIO_WAKEUP_GPIO_LOW);
-  if (err != ESP_OK) {
-    Serial.printf("[power] gpio wakeup enable failed: %d\n", (int)err);
-    gpio_hold_dis((gpio_num_t)PIN_PWR_LATCH);
-    return false;
-  }
-
-  Serial.println("[power] deep sleep (latch low, wake on power btn)");
-  Serial.flush();
-  delay(30);
-  esp_deep_sleep_start();
-  return true;
-}
-
-void soft_sleep_loop() {
-  Serial.println("[power] soft-sleep — hold power ~0.5s to wake");
+/**
+ * Wait for a fresh long-press: button must be up, then held >= hold_ms.
+ * Ignores the press that initiated sleep.
+ */
+void wait_fresh_long_press(uint32_t hold_ms) {
+  wait_power_up_stable(200);
+  Serial.println("[power] armed — hold power to wake");
   Serial.flush();
 
+  uint32_t down_since = 0;
   while (true) {
-    delay(40);
-    if (buttons_power_held_ms() >= kPowerSleepHoldMs) {
-      Serial.println("[power] soft-wake");
-      wait_power_released();
-      return;
+    if (power_is_down()) {
+      if (down_since == 0) {
+        down_since = millis();
+      } else if (millis() - down_since >= hold_ms) {
+        Serial.println("[power] wake press accepted");
+        wait_power_up_stable(150);
+        return;
+      }
+    } else {
+      down_since = 0;
     }
+    delay(20);
   }
 }
 
@@ -124,40 +84,47 @@ void power_poll_auto_sleep(uint32_t now_ms) {
 }
 
 void power_enter_sleep() {
-  Serial.println("[power] sleep requested");
+  Serial.println("[power] === SLEEP BEGIN ===");
   Serial.flush();
 
+  // Keep battery latch ON for soft-sleep (do not cut the rail).
+  pinMode(PIN_PWR_LATCH, OUTPUT);
+  digitalWrite(PIN_PWR_LATCH, HIGH);
+  pinMode(PIN_BTN_POWER, INPUT_PULLUP);
+
 #if !defined(BIKE_HUD_DEMO)
+  Serial.println("[power] stopping BLE");
+  Serial.flush();
   NimBLEDevice::deinit(true);
 #endif
 
-  // One full refresh splash via existing panel (no second driver).
+  Serial.println("[power] drawing splash");
+  Serial.flush();
   hud_show_sleep_splash();
+  Serial.println("[power] splash done");
+  Serial.flush();
 
-  wait_power_released();
-  delay(150);
+  // User may still be holding the button from the sleep gesture.
+  Serial.println("[power] wait for release");
+  Serial.flush();
+  wait_power_up_stable(300);
+  delay(100);
 
-  // Prefer CrossPoint-style deep sleep when unplugged.
-  if (!usb_vbus_likely_present()) {
-    if (try_deep_sleep()) {
-      // not reached
-    }
-  } else {
-    Serial.println("[power] USB present — soft-sleep (deep sleep unstable on CDC)");
-  }
+  // Stay here until a *new* long-press. Splash remains on e-ink.
+  wait_fresh_long_press(kPowerSleepHoldMs);
 
-  soft_sleep_loop();
-
-  // Soft-wake only: restore button + BLE + UI.
-  gpio_hold_dis((gpio_num_t)PIN_PWR_LATCH);
+  // Wake
   pinMode(PIN_BTN_POWER, INPUT_PULLUP);
   pinMode(PIN_PWR_LATCH, OUTPUT);
-  digitalWrite(PIN_PWR_LATCH, HIGH); // ensure rail stays on after soft-wake
+  digitalWrite(PIN_PWR_LATCH, HIGH);
 
+  Serial.println("[power] restoring display + BLE");
+  Serial.flush();
+  hud_wake_from_sleep();
 #if !defined(BIKE_HUD_DEMO)
   ble_service_begin();
 #endif
-  hud_force_full_redraw();
   power_note_activity();
-  Serial.println("[power] resumed");
+  Serial.println("[power] === AWAKE ===");
+  Serial.flush();
 }

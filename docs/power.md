@@ -7,55 +7,57 @@ Inspired by CrossPoint’s `HalPowerManager` / `enterDeepSleep`.
 | Pin | Role |
 |---|---|
 | **GPIO3** | Power button (active **low**) |
-| **GPIO13** | Battery **latch MOSFET** — LOW cuts MCU power on battery |
+| **GPIO13** | Battery **latch MOSFET** — LOW cuts MCU power on battery (CrossPoint) |
 
-CrossPoint drives **GPIO13 low + `gpio_hold_en`** before deep sleep. On battery the MCU is then fully off (including RTC). The power button is hard-wired to briefly power the rail and boot the chip — GPIO wake is mainly for **USB-powered** wake.
+CrossPoint drives GPIO13 low + hold before deep sleep. On battery the MCU is then fully off; the power button hard-wires power to boot.
 
-E-ink is bistable: the last image (sleep splash) stays with almost no panel power.
+## BikeHUD behaviour (current)
 
-## BikeHUD behaviour
-
-### Manual sleep
+### Manual sleep — **soft-sleep only**
 1. Hold power ≥ **500 ms**  
-2. Full-refresh splash: **BikeHUD / Sleeping / hold power to wake**  
-3. Wait for button **release**  
-4. Enter sleep:
-   - **Unplugged:** deep sleep (latch low, GPIO wake armed)  
-   - **USB connected:** **soft-sleep** idle loop (USB-JTAG makes deep sleep bounce: black → white → UI)
+2. Splash full-refresh: **BikeHUD / Sleeping / hold power to wake**  
+3. **Release** the button completely  
+4. Device stays on splash (MCU idle, BLE off)  
+5. Hold power ≥ **500 ms** again to wake → BLE + UI  
 
-### Manual wake
-- **Battery deep sleep:** press power (hardware power-up → cold boot)  
-- **Soft-sleep:** hold power ≥ 500 ms again → BLE + UI resume  
+Deep sleep was bouncing (black → white → ride UI) before the splash could stick, especially with USB-Serial/JTAG. Soft-sleep is intentional until battery deep-sleep is revalidated.
 
-### Auto-sleep (inactivity)
-Same idea as CrossPoint’s default **10 minute** timeout:
+### Auto-sleep
+After **10 minutes** with no:
+- side buttons  
+- BLE link change  
+- telemetry / time-sync packets  
 
-| Resets the idle timer |
-|---|
-| Side buttons (page flip, etc.) |
-| BLE connect / disconnect |
-| Telemetry or time-sync writes |
+Constant: `kAutoSleepIdleMs` in `firmware/include/power.h` (`0` = off).
 
-Constant: `kAutoSleepIdleMs` in `firmware/include/power.h` (default `10 * 60 * 1000`). Set to `0` to disable.
+## CrossPoint deep sleep (planned)
+
+| Step | CrossPoint |
+|---|---|
+| Wait for power release | yes |
+| Tear down radio / serial | yes |
+| GPIO13 latch low + hold | yes |
+| `esp_deep_sleep` + GPIO wake | yes (USB wake; battery is hard power-on) |
+
+We’ll re-enable that path behind a clear “battery deep sleep” once soft-sleep UX is solid unplugged.
+
+## Debug
+
+Serial (115200) on long-press:
+
+```
+[power] === SLEEP BEGIN ===
+[power] stopping BLE
+[power] drawing splash
+[power] splash done
+[power] wait for release
+[power] armed — hold power to wake
+```
+
+If you never see `SLEEP BEGIN`, the hold detector isn’t firing. If you see splash then immediately `AWAKE`, the wake path accepted a press too early.
 
 ## If wake fails
 
 1. Hold power 1–2 s  
-2. Plug USB-C (reset / soft path)  
+2. Plug USB-C  
 3. `pio run -e x4 -t upload`  
-4. Restore CrossPoint from backup if needed  
-
-## Power budget (rough)
-
-| State | Notes |
-|---|---|
-| Awake + BLE | Tens of mA (ride) |
-| Soft-sleep (USB) | Lower than active UI, not µA |
-| Deep sleep + latch (battery) | Near-off; CrossPoint-class |
-| E-ink static splash | Negligible |
-
-## Future
-
-- Settings packet from iOS for timeout minutes / never  
-- Light sleep while connected  
-- Optional “keep awake while LIVE packets flow” is already true via activity notes  
