@@ -97,8 +97,12 @@ struct Telemetry {
     has_packet = true;
     write_count++;
 
-    if (full && (p.flags & BIKE_HUD_FLAG_CLOCK_VALID) &&
-        p.version == BIKE_HUD_PROTOCOL_VERSION_V2) {
+    // Accept wall clock from v2 trailer when flag set, or when fields look sane
+    // (older/buggy hubs may omit FLAG_CLOCK_VALID).
+    if (full && p.version == BIKE_HUD_PROTOCOL_VERSION_V2 &&
+        full->year >= 2020 && full->year < 2100 && full->month >= 1 &&
+        full->month <= 12 && full->day >= 1 && full->day <= 31 &&
+        full->hour <= 23 && full->minute <= 59 && full->day_of_week <= 6) {
       year = full->year;
       month = full->month;
       day = full->day;

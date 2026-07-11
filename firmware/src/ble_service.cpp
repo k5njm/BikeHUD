@@ -51,9 +51,12 @@ class TelemetryCallbacks : public NimBLECharacteristicCallbacks {
       } else {
         g_telemetry.apply(pkt.body, millis());
       }
-      Serial.printf("[ble] pkt #%lu v%u spd=%u hr=%u\n",
+      Serial.printf("[ble] pkt #%lu v%u spd=%u hr=%u clk=%u %04u-%02u-%02u %02u:%02u\n",
                     (unsigned long)g_telemetry.write_count, pkt.body.version,
-                    pkt.body.speed_cm_s, pkt.body.hr_bpm);
+                    pkt.body.speed_cm_s, pkt.body.hr_bpm,
+                    (unsigned)g_telemetry.clock_valid, g_telemetry.year,
+                    g_telemetry.month, g_telemetry.day, g_telemetry.hour,
+                    g_telemetry.minute);
       return;
     }
 

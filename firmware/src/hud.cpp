@@ -327,6 +327,7 @@ void formatWallClock(char *buf, size_t n, const Telemetry &tel) {
            (unsigned)tel.minute);
 }
 
+/** Filled area chart (iGPSPORT-style) under the sample polyline. */
 void drawSparkline(int16_t x, int16_t y, int16_t w, int16_t h,
                    const MetricSeries &series) {
   if (series.count < 2 || w < 8 || h < 8) {
@@ -341,47 +342,79 @@ void drawSparkline(int16_t x, int16_t y, int16_t w, int16_t h,
     if (tmp[i] > hi)
       hi = tmp[i];
   }
-  // Flat line if no variation
   uint8_t span = (uint8_t)(hi - lo);
   if (span < 2) {
     span = 2;
     if (lo > 0)
       lo--;
   }
+
   display.drawRect(x, y, w, h, GxEPD_BLACK);
+  const int16_t base = y + h - 2;
+  const int16_t inner_w = w - 3;
+  const int16_t inner_h = h - 4;
+
   int16_t prev_px = 0, prev_py = 0;
   for (uint8_t i = 0; i < n; i++) {
-    const int16_t px = x + 1 + (int16_t)((int32_t)i * (w - 3) / (n - 1));
+    const int16_t px = x + 1 + (int16_t)((int32_t)i * inner_w / (n - 1));
     const int16_t py =
-        y + h - 2 -
-        (int16_t)((int32_t)(tmp[i] - lo) * (h - 4) / span);
+        y + 2 + inner_h - (int16_t)((int32_t)(tmp[i] - lo) * inner_h / span);
     if (i > 0) {
-      display.drawLine(prev_px, prev_py, px, py, GxEPD_BLACK);
+      const int16_t dx = px - prev_px;
+      const int16_t xL = prev_px < px ? prev_px : px;
+      const int16_t xR = prev_px < px ? px : prev_px;
+      for (int16_t xx = xL; xx <= xR; xx++) {
+        int16_t top = prev_py;
+        if (dx != 0) {
+          top = (int16_t)(prev_py +
+                          (int32_t)(py - prev_py) * (xx - prev_px) / dx);
+        }
+        if (base >= top) {
+          display.drawFastVLine(xx, top, base - top + 1, GxEPD_BLACK);
+        }
+      }
+    } else if (base >= py) {
+      display.drawFastVLine(px, py, base - py + 1, GxEPD_BLACK);
     }
     prev_px = px;
     prev_py = py;
   }
 }
 
-/** Simple metric cell: label + centered value. */
-void drawMetricCell(int16_t x, int16_t y, int16_t w, int16_t h,
-                    const char *label, const char *value,
-                    const GFXfont *value_font) {
+/** Label + 7-segment value, vertically centered in the free area under the label. */
+void drawMetricCell7(int16_t x, int16_t y, int16_t w, int16_t h,
+                     const char *label, const char *value) {
   display.drawRect(x, y, w, h, GxEPD_BLACK);
   display.drawRect(x + 1, y + 1, w - 2, h - 2, GxEPD_BLACK);
 
-  drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + 18, label);
+  const int16_t label_h = 22;
+  drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + 16, label);
+
+  // Value band: full remaining height — drawHeroNumber centers inside it.
+  drawHeroNumber(x + 4, y + label_h, w - 8, h - label_h - 6, value);
+}
+
+/** Sans value (duration etc.) centered in free area under label. */
+void drawMetricCellText(int16_t x, int16_t y, int16_t w, int16_t h,
+                        const char *label, const char *value,
+                        const GFXfont *value_font) {
+  display.drawRect(x, y, w, h, GxEPD_BLACK);
+  display.drawRect(x + 1, y + 1, w - 2, h - 2, GxEPD_BLACK);
+
+  const int16_t label_h = 22;
+  drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + 16, label);
 
   int16_t vw, vh;
   textSize(value_font, value, &vw, &vh);
-  const int16_t cx = x + w / 2;
-  const int16_t cy = y + h / 2 + vh / 2 + 4;
-  drawCentered(value_font, cx, cy, value);
+  const int16_t band_y = y + label_h;
+  const int16_t band_h = h - label_h;
+  // GFX FreeFont cursor is baseline — place mid-band.
+  const int16_t baseline = band_y + band_h / 2 + vh / 3;
+  drawCentered(value_font, x + w / 2, baseline, value);
 }
 
 /**
- * Metric cell with sparkline + avg/hi/lo (HR / cadence style).
- * Layout: label, big value, sparkline strip, stats line.
+ * Trend cell: label, 7-seg value (centered in middle band), filled sparkline, stats.
  */
 void drawTrendCell(int16_t x, int16_t y, int16_t w, int16_t h,
                    const char *label, const char *value,
@@ -389,61 +422,62 @@ void drawTrendCell(int16_t x, int16_t y, int16_t w, int16_t h,
   display.drawRect(x, y, w, h, GxEPD_BLACK);
   display.drawRect(x + 1, y + 1, w - 2, h - 2, GxEPD_BLACK);
 
-  drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + 18, label);
+  const int16_t label_h = 20;
+  const int16_t spark_h = 40;
+  const int16_t stats_h = 16;
+  const int16_t value_h = h - label_h - spark_h - stats_h - 4;
 
-  const int16_t spark_h = 36;
-  const int16_t stats_h = 18;
+  drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + 15, label);
 
-  int16_t vw, vh;
-  textSize(&FreeSansBold24pt7b, value, &vw, &vh);
-  drawCentered(&FreeSansBold24pt7b, x + w / 2, y + 28 + vh + 8, value);
+  // Center 7-seg in the middle band (not pinned under the label).
+  drawHeroNumber(x + 4, y + label_h, w - 8, value_h, value);
 
-  const int16_t sx = x + 8;
-  const int16_t sy = y + h - spark_h - stats_h - 4;
-  const int16_t sw = w - 16;
+  const int16_t sx = x + 6;
+  const int16_t sy = y + h - spark_h - stats_h - 2;
+  const int16_t sw = w - 12;
   if (show_stats && series.count >= 2) {
     drawSparkline(sx, sy, sw, spark_h, series);
     uint8_t avg = 0, lo = 0, hi = 0;
     series.stats(&avg, &lo, &hi);
     char stats[40];
     snprintf(stats, sizeof(stats), "avg %u  hi %u  lo %u", avg, hi, lo);
-    drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + h - 8, stats);
+    drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + h - 4, stats);
   } else {
     display.drawRect(sx, sy, sw, spark_h, GxEPD_BLACK);
-    drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + h - 8, "avg --  hi --  lo --");
+    drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + h - 4, "avg --  hi --  lo --");
   }
 }
 
-// Status bar height (shared with page layouts)
-constexpr int16_t kStatusH = 48;
+// Single-line status; baseline must sit below glyph ascent (FreeFonts clip if y too small).
+constexpr int16_t kStatusH = 40;
 
 void drawStatusBar(const Telemetry &tel, Telemetry::Freshness f, bool linked) {
   const int16_t W = display.width();
   display.drawRect(0, 0, W, kStatusH, GxEPD_BLACK);
   display.drawRect(1, 1, W - 2, kStatusH - 2, GxEPD_BLACK);
 
-  // Left: "BikeHUD" + optional wall clock from hub
-  drawLabelLeft(&FreeSansBold12pt7b, 10, 20, "BikeHUD");
+  // Left: "BikeHUD  Fri Jul 10 · 18:34" on one line (next to title).
+  char left[48];
   if (tel.clock_valid) {
-    char when[32];
+    char when[28];
     formatWallClock(when, sizeof(when), tel);
-    if (when[0]) {
-      drawLabelLeft(&FreeSansBold9pt7b, 10, 40, when);
-    }
+    snprintf(left, sizeof(left), "BikeHUD  %s", when[0] ? when : "");
+  } else {
+    snprintf(left, sizeof(left), "BikeHUD");
   }
 
-  // Right: freshness · link
+  // Right: LIVE · LINK
   char right[28];
   snprintf(right, sizeof(right), "%s · %s", freshnessLabel(f),
            linked ? "LINK" : "ADV");
-  int16_t rw, rh;
-  textSize(&FreeSansBold12pt7b, right, &rw, &rh);
-  const GFXfont *rf = &FreeSansBold12pt7b;
-  if (rw > W / 2 - 8) {
-    textSize(&FreeSansBold9pt7b, right, &rw, &rh);
-    rf = &FreeSansBold9pt7b;
-  }
-  drawLabelLeft(rf, W - rw - 10, 30, right);
+
+  int16_t lw, lh, rw, rh;
+  textSize(&FreeSansBold9pt7b, left, &lw, &lh);
+  textSize(&FreeSansBold9pt7b, right, &rw, &rh);
+  // Baseline ~28 keeps 9pt glyphs fully inside a 40px bar.
+  const int16_t baseline = 28;
+  drawLabelLeft(&FreeSansBold9pt7b, 8, baseline, left);
+  drawLabelLeft(&FreeSansBold9pt7b, W - rw - 8, baseline, right);
 }
 
 void paintPage0(const Telemetry &tel, bool show_values) {
@@ -507,12 +541,12 @@ void paintPage0(const Telemetry &tel, bool show_values) {
 
   drawTrendCell(0, grid_y, cell_w, cell_h, "HEART RATE", hr, tel.hr_hist,
                 show_values);
-  drawMetricCell(cell_w - 1, grid_y, cell_w + 1, cell_h, "DURATION", dur,
-                 &FreeSansBold24pt7b);
+  drawMetricCellText(cell_w - 1, grid_y, cell_w + 1, cell_h, "DURATION", dur,
+                     &FreeSansBold24pt7b);
   drawTrendCell(0, grid_y + cell_h - 1, cell_w, cell_h + 1, "CADENCE", cad,
                 tel.cad_hist, show_values);
-  drawMetricCell(cell_w - 1, grid_y + cell_h - 1, cell_w + 1, cell_h + 1,
-                 distanceLabel(), dist, &FreeSansBold24pt7b);
+  drawMetricCell7(cell_w - 1, grid_y + cell_h - 1, cell_w + 1, cell_h + 1,
+                  distanceLabel(), dist);
 }
 
 void paintPage1(const Telemetry &tel, bool show_values) {
@@ -561,13 +595,11 @@ void paintPage1(const Telemetry &tel, bool show_values) {
     snprintf(hub, sizeof(hub), "--");
   }
 
-  drawMetricCell(0, top, cell_w, cell_h, elevLabel(), elev, &FreeSansBold24pt7b);
-  drawMetricCell(cell_w - 1, top, cell_w + 1, cell_h, avgLabel(), avg,
-                 &FreeSansBold24pt7b);
-  drawMetricCell(0, top + cell_h - 1, cell_w, cell_h + 1, "HUB BATT", batt,
-                 &FreeSansBold24pt7b);
-  drawMetricCell(cell_w - 1, top + cell_h - 1, cell_w + 1, cell_h + 1, "HUB",
-                 hub, &FreeSansBold18pt7b);
+  drawMetricCell7(0, top, cell_w, cell_h, elevLabel(), elev);
+  drawMetricCell7(cell_w - 1, top, cell_w + 1, cell_h, avgLabel(), avg);
+  drawMetricCell7(0, top + cell_h - 1, cell_w, cell_h + 1, "HUB BATT", batt);
+  drawMetricCellText(cell_w - 1, top + cell_h - 1, cell_w + 1, cell_h + 1, "HUB",
+                     hub, &FreeSansBold18pt7b);
 }
 
 void paintPage2(const Telemetry &tel, Telemetry::Freshness f, bool linked) {
