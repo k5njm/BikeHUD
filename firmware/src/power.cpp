@@ -5,8 +5,6 @@
 #include "buttons.h"
 #include "hud.h"
 
-#include <NimBLEDevice.h>
-
 /**
  * Reliable sleep first; CrossPoint deep-sleep+latch is opt-in later.
  *
@@ -93,9 +91,9 @@ void power_enter_sleep() {
   pinMode(PIN_BTN_POWER, INPUT_PULLUP);
 
 #if !defined(BIKE_HUD_DEMO)
-  Serial.println("[power] stopping BLE");
-  Serial.flush();
-  NimBLEDevice::deinit(true);
+  // Safe pause — never NimBLEDevice::deinit while a central is connected
+  // (that double-frees heap; see serial: heap_caps_free assert).
+  ble_service_shutdown_for_sleep();
 #endif
 
   Serial.println("[power] drawing splash");
@@ -122,7 +120,7 @@ void power_enter_sleep() {
   Serial.flush();
   hud_wake_from_sleep();
 #if !defined(BIKE_HUD_DEMO)
-  ble_service_begin();
+  ble_service_resume_from_sleep();
 #endif
   power_note_activity();
   Serial.println("[power] === AWAKE ===");

@@ -11,6 +11,8 @@ namespace {
 NimBLEServer *g_server = nullptr;
 NimBLECharacteristic *g_telem_char = nullptr;
 bool g_connected = false;
+bool g_started = false;
+bool g_shutting_down = false;
 
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer * /*server*/, NimBLEConnInfo & /*connInfo*/) override {
@@ -21,6 +23,10 @@ class ServerCallbacks : public NimBLEServerCallbacks {
   void onDisconnect(NimBLEServer * /*server*/, NimBLEConnInfo & /*connInfo*/,
                     int /*reason*/) override {
     g_connected = false;
+    if (g_shutting_down) {
+      Serial.println("[ble] disconnected (shutdown)");
+      return;
+    }
     Serial.println("[ble] central disconnected — restart advertising");
     NimBLEDevice::startAdvertising();
   }
@@ -63,6 +69,14 @@ class TelemetryCallbacks : public NimBLECharacteristicCallbacks {
 } // namespace
 
 void ble_service_begin() {
+  g_shutting_down = false;
+
+  if (g_started) {
+    // Already initialized (soft-wake path) — just advertise again.
+    ble_service_resume_from_sleep();
+    return;
+  }
+
   if (!NimBLEDevice::init(BIKE_HUD_DEVICE_NAME)) {
     Serial.println("[ble] NimBLEDevice::init FAILED");
     return;
@@ -95,9 +109,48 @@ void ble_service_begin() {
   adv->enableScanResponse(true);
   adv->start();
 
+  g_started = true;
   Serial.println("[ble] advertising as " BIKE_HUD_DEVICE_NAME);
 }
 
 void ble_service_loop() {}
 
 bool ble_service_is_connected() { return g_connected; }
+
+void ble_service_shutdown_for_sleep() {
+  if (!g_started) {
+    Serial.println("[ble] shutdown: not started");
+    return;
+  }
+  g_shutting_down = true;
+  Serial.println("[ble] shutdown for sleep");
+
+  NimBLEDevice::stopAdvertising();
+
+  if (g_server) {
+    std::vector<uint16_t> peers = g_server->getPeerDevices();
+    for (uint16_t h : peers) {
+      g_server->disconnect(h);
+    }
+  }
+
+  // Let disconnect callbacks run with g_shutting_down set (no re-advertise).
+  delay(100);
+  g_connected = false;
+  // Intentionally do NOT NimBLEDevice::deinit() — that frees heap while
+  // disconnect handlers still run and panics (heap_caps_free outside heap).
+  Serial.println("[ble] radio paused (no deinit)");
+}
+
+void ble_service_resume_from_sleep() {
+  g_shutting_down = false;
+  if (!g_started) {
+    ble_service_begin();
+    return;
+  }
+  NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
+  if (adv) {
+    adv->start();
+  }
+  Serial.println("[ble] advertising resumed");
+}
