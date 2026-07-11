@@ -244,16 +244,20 @@ void drawHeroNumber(int16_t box_x, int16_t box_y, int16_t box_w, int16_t box_h,
   if (glyphs < 1)
     glyphs = 1;
 
-  const int16_t gap = 12;
-  const int16_t dot_w = 18;
+  const int16_t gap = (box_h >= 120) ? 12 : 6;
+  const int16_t dot_w = (box_h >= 120) ? 18 : 10;
 
-  // Classic 7-seg is taller than wide (~1.7:1)
-  int16_t dh = (int16_t)(box_h * 0.70f);
-  if (dh < 110)
-    dh = 110;
+  // Fit inside the given box — never force a min height larger than the band
+  // (that was overflowing HR/cadence into the sparkline area).
+  int16_t dh = (int16_t)(box_h * 0.82f);
+  if (dh > box_h - 4)
+    dh = box_h - 4;
+  if (dh < 28)
+    dh = 28;
   if (dh > 240)
     dh = 240;
-  int16_t dw = (int16_t)(dh * 0.55f);
+  // Classic tall 7-seg aspect when there's room; a bit wider in tight cells.
+  int16_t dw = (int16_t)(dh * (box_h >= 100 ? 0.55f : 0.62f));
 
   int16_t total =
       glyphs * dw + (glyphs > 0 ? (glyphs - 1) * gap : 0) +
@@ -327,7 +331,10 @@ void formatWallClock(char *buf, size_t n, const Telemetry &tel) {
            (unsigned)tel.minute);
 }
 
-/** Filled area chart (iGPSPORT-style) under the sample polyline. */
+/**
+ * Area chart under the sample curve. On 1-bit e-ink a solid fill becomes a
+ * black slab when values are flat — use 50% vertical hatch + bold outline.
+ */
 void drawSparkline(int16_t x, int16_t y, int16_t w, int16_t h,
                    const MetricSeries &series) {
   if (series.count < 2 || w < 8 || h < 8) {
@@ -342,12 +349,12 @@ void drawSparkline(int16_t x, int16_t y, int16_t w, int16_t h,
     if (tmp[i] > hi)
       hi = tmp[i];
   }
-  uint8_t span = (uint8_t)(hi - lo);
-  if (span < 2) {
-    span = 2;
-    if (lo > 0)
-      lo--;
-  }
+  const bool flat = (hi - lo) < 2;
+  uint8_t span = flat ? 2 : (uint8_t)(hi - lo);
+  // Pad range so the curve sits with a little air
+  if (lo > 0)
+    lo--;
+  span = (uint8_t)(span + 1);
 
   display.drawRect(x, y, w, h, GxEPD_BLACK);
   const int16_t base = y + h - 2;
@@ -357,8 +364,13 @@ void drawSparkline(int16_t x, int16_t y, int16_t w, int16_t h,
   int16_t prev_px = 0, prev_py = 0;
   for (uint8_t i = 0; i < n; i++) {
     const int16_t px = x + 1 + (int16_t)((int32_t)i * inner_w / (n - 1));
-    const int16_t py =
-        y + 2 + inner_h - (int16_t)((int32_t)(tmp[i] - lo) * inner_h / span);
+    int16_t py;
+    if (flat) {
+      py = y + 2 + inner_h / 2; // mid line when no variation
+    } else {
+      py = y + 2 + inner_h -
+           (int16_t)((int32_t)(tmp[i] - lo) * inner_h / span);
+    }
     if (i > 0) {
       const int16_t dx = px - prev_px;
       const int16_t xL = prev_px < px ? prev_px : px;
@@ -369,12 +381,13 @@ void drawSparkline(int16_t x, int16_t y, int16_t w, int16_t h,
           top = (int16_t)(prev_py +
                           (int32_t)(py - prev_py) * (xx - prev_px) / dx);
         }
-        if (base >= top) {
+        // Hatch fill (every other column) so charts don't read as solid ink.
+        if (!flat && (xx & 1) == 0 && base >= top) {
           display.drawFastVLine(xx, top, base - top + 1, GxEPD_BLACK);
         }
       }
-    } else if (base >= py) {
-      display.drawFastVLine(px, py, base - py + 1, GxEPD_BLACK);
+      display.drawLine(prev_px, prev_py, px, py, GxEPD_BLACK);
+      display.drawLine(prev_px, prev_py + 1, px, py + 1, GxEPD_BLACK);
     }
     prev_px = px;
     prev_py = py;
@@ -414,7 +427,8 @@ void drawMetricCellText(int16_t x, int16_t y, int16_t w, int16_t h,
 }
 
 /**
- * Trend cell: label, 7-seg value (centered in middle band), filled sparkline, stats.
+ * Trend cell: label, 7-seg value (middle band), hatched area chart, stats.
+ * Bands are fixed fractions so digits never collide with the chart.
  */
 void drawTrendCell(int16_t x, int16_t y, int16_t w, int16_t h,
                    const char *label, const char *value,
@@ -422,15 +436,23 @@ void drawTrendCell(int16_t x, int16_t y, int16_t w, int16_t h,
   display.drawRect(x, y, w, h, GxEPD_BLACK);
   display.drawRect(x + 1, y + 1, w - 2, h - 2, GxEPD_BLACK);
 
-  const int16_t label_h = 20;
-  const int16_t spark_h = 40;
-  const int16_t stats_h = 16;
-  const int16_t value_h = h - label_h - spark_h - stats_h - 4;
+  const int16_t label_h = 18;
+  const int16_t stats_h = 14;
+  const int16_t spark_h = 48;
+  // Cap digit band so 3-digit HR stays readable and clear of the chart.
+  int16_t value_h = h - label_h - spark_h - stats_h - 6;
+  if (value_h > 72)
+    value_h = 72;
+  if (value_h < 36)
+    value_h = 36;
 
-  drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + 15, label);
+  drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + 14, label);
 
-  // Center 7-seg in the middle band (not pinned under the label).
-  drawHeroNumber(x + 4, y + label_h, w - 8, value_h, value);
+  // Vertically center the digit band between label and chart.
+  const int16_t gap_above_chart =
+      h - label_h - stats_h - spark_h - value_h - 4;
+  const int16_t value_y = y + label_h + (gap_above_chart > 0 ? gap_above_chart / 2 : 0);
+  drawHeroNumber(x + 6, value_y, w - 12, value_h, value);
 
   const int16_t sx = x + 6;
   const int16_t sy = y + h - spark_h - stats_h - 2;
@@ -441,43 +463,44 @@ void drawTrendCell(int16_t x, int16_t y, int16_t w, int16_t h,
     series.stats(&avg, &lo, &hi);
     char stats[40];
     snprintf(stats, sizeof(stats), "avg %u  hi %u  lo %u", avg, hi, lo);
-    drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + h - 4, stats);
+    drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + h - 3, stats);
   } else {
     display.drawRect(sx, sy, sw, spark_h, GxEPD_BLACK);
-    drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + h - 4, "avg --  hi --  lo --");
+    drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + h - 3, "avg --  hi --  lo --");
   }
 }
 
-// Single-line status; baseline must sit below glyph ascent (FreeFonts clip if y too small).
-constexpr int16_t kStatusH = 40;
+// Single-line status; FreeFont baseline must clear glyph ascent.
+constexpr int16_t kStatusH = 36;
 
 void drawStatusBar(const Telemetry &tel, Telemetry::Freshness f, bool linked) {
   const int16_t W = display.width();
-  display.drawRect(0, 0, W, kStatusH, GxEPD_BLACK);
-  display.drawRect(1, 1, W - 2, kStatusH - 2, GxEPD_BLACK);
+  display.fillRect(0, 0, W, kStatusH, GxEPD_WHITE);
+  display.drawFastHLine(0, kStatusH - 1, W, GxEPD_BLACK);
 
-  // Left: "BikeHUD  Fri Jul 10 · 18:34" on one line (next to title).
+  // Left: "BikeHUD  Fri Jul 10 · 18:34"
   char left[48];
   if (tel.clock_valid) {
     char when[28];
     formatWallClock(when, sizeof(when), tel);
-    snprintf(left, sizeof(left), "BikeHUD  %s", when[0] ? when : "");
+    if (when[0]) {
+      snprintf(left, sizeof(left), "BikeHUD  %s", when);
+    } else {
+      snprintf(left, sizeof(left), "BikeHUD");
+    }
   } else {
     snprintf(left, sizeof(left), "BikeHUD");
   }
 
-  // Right: LIVE · LINK
   char right[28];
   snprintf(right, sizeof(right), "%s · %s", freshnessLabel(f),
            linked ? "LINK" : "ADV");
 
-  int16_t lw, lh, rw, rh;
-  textSize(&FreeSansBold9pt7b, left, &lw, &lh);
+  int16_t rw, rh;
   textSize(&FreeSansBold9pt7b, right, &rw, &rh);
-  // Baseline ~28 keeps 9pt glyphs fully inside a 40px bar.
-  const int16_t baseline = 28;
-  drawLabelLeft(&FreeSansBold9pt7b, 8, baseline, left);
-  drawLabelLeft(&FreeSansBold9pt7b, W - rw - 8, baseline, right);
+  const int16_t baseline = 24; // 9pt ascent fits in 36px bar
+  drawLabelLeft(&FreeSansBold9pt7b, 6, baseline, left);
+  drawLabelLeft(&FreeSansBold9pt7b, W - rw - 6, baseline, right);
 }
 
 void paintPage0(const Telemetry &tel, bool show_values) {
