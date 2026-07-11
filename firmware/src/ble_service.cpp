@@ -10,6 +10,7 @@ namespace {
 
 NimBLEServer *g_server = nullptr;
 NimBLECharacteristic *g_telem_char = nullptr;
+NimBLECharacteristic *g_control_char = nullptr;
 bool g_connected = false;
 bool g_started = false;
 bool g_shutting_down = false;
@@ -96,12 +97,22 @@ void ble_service_begin() {
 
   g_telem_char->setCallbacks(&g_telem_cbs);
 
+  // Control: X4 → hub (button events). Notify only; hub enables CCCD.
+  g_control_char = svc->createCharacteristic(
+      BIKE_HUD_UUID_CONTROL_STR,
+      NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+
   BikeHudPacketV1 empty{};
   empty.version = BIKE_HUD_PROTOCOL_VERSION;
   empty.cadence_rpm = BIKE_HUD_UNKNOWN_U8;
   empty.batt_pct = BIKE_HUD_UNKNOWN_U8;
   empty.gps_acc_m = BIKE_HUD_UNKNOWN_U8;
   g_telem_char->setValue((uint8_t *)&empty, sizeof(empty));
+
+  BikeHudControlEvent ctl{};
+  ctl.version = BIKE_HUD_MSG_CONTROL;
+  ctl.event = BIKE_HUD_EVT_NONE;
+  g_control_char->setValue((uint8_t *)&ctl, sizeof(ctl));
 
   NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
   adv->setName(BIKE_HUD_DEVICE_NAME);
@@ -153,4 +164,21 @@ void ble_service_resume_from_sleep() {
     adv->start();
   }
   Serial.println("[ble] advertising resumed");
+}
+
+bool ble_service_notify_control_event(uint8_t event) {
+  if (!g_started || !g_connected || !g_control_char) {
+    Serial.printf("[ble] control notify skipped (evt=%u connected=%d)\n",
+                  (unsigned)event, (int)g_connected);
+    return false;
+  }
+  BikeHudControlEvent ctl{};
+  ctl.version = BIKE_HUD_MSG_CONTROL;
+  ctl.event = event;
+  g_control_char->setValue((uint8_t *)&ctl, sizeof(ctl));
+  // NimBLE notify all subscribed centrals.
+  bool ok = g_control_char->notify();
+  Serial.printf("[ble] control notify evt=%u ok=%d\n", (unsigned)event,
+                (int)ok);
+  return ok;
 }

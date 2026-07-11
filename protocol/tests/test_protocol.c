@@ -40,6 +40,15 @@ int main(void) {
   EXPECT(bike_hud_is_time_sync((const uint8_t *)&ts, 16), "is time sync");
   EXPECT(!bike_hud_is_telemetry((const uint8_t *)&ts, 16), "not telemetry");
 
+  EXPECT(sizeof(BikeHudControlEvent) == 16, "control 16");
+  EXPECT(BIKE_HUD_MSG_CONTROL == 0x20u, "control type");
+  EXPECT(BIKE_HUD_EVT_PAUSE_TOGGLE == 1u, "pause evt");
+  BikeHudControlEvent ce = {0};
+  ce.version = BIKE_HUD_MSG_CONTROL;
+  ce.event = BIKE_HUD_EVT_PAUSE_TOGGLE;
+  EXPECT(bike_hud_is_control((const uint8_t *)&ce, 16), "is control");
+  EXPECT(!bike_hud_is_telemetry((const uint8_t *)&ce, 16), "control not telem");
+
   if (failures) {
     fprintf(stderr, "%d failure(s)\n", failures);
     return 1;

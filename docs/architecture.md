@@ -46,6 +46,20 @@ watchOS later      same package, same characteristic write
 | 1 | Distance · Avg speed · Elev · Hub battery |
 | 2 | Link status · GPS accuracy · Hub type · free heap (dev) |
 
+### Side / front buttons (current)
+
+Decode uses CrossPoint `InputManager` **open ADC ranges** + `analogSetAttenuation(ADC_11db)` (not fixed ±midpoint windows).
+
+| Physical | Hardware name | Action |
+|---|---|---|
+| Bottom ↑ / side vol ↑ | Left / VolUp | Previous page |
+| Bottom ↓ / side vol ↓ | Right / VolDown | Next page |
+| Bottom Confirm | Confirm | Notify hub `PAUSE_TOGGLE` (phone owns workout clock / recording) |
+| Bottom Back | Back | Invert ride UI (local full-refresh; black paper / white ink) |
+| Power (long hold) | Power | Soft-sleep splash |
+
+Control path: GATT notify on `B10E0003…` (`BikeHudControlEvent`, msg `0x20`).
+
 ### Freshness
 
 - weak link after 3 s without a good write  

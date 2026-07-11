@@ -11,15 +11,23 @@
 |---|---|
 | Service | `B10E0001-C0C0-41A3-B4C6-42494B454855` |
 | Telemetry characteristic (write w/o rsp + read) | `B10E0002-C0C0-41A3-B4C6-42494B454855` |
+| Control characteristic (notify + read) | `B10E0003-C0C0-41A3-B4C6-42494B454855` |
 | Device name advertisement | `BikeHUD` |
 
 ## Characteristic usage
 
+### Telemetry (`…0002`) — hub → X4
 - **Properties:** `writeWithoutResponse`, `read` (and `write` as fallback).
 - Two **message types** share the same 16-byte characteristic; discriminated by byte 0:
   - `0x01` — telemetry (~1 Hz while a workout is live)
   - `0x10` — wall-clock sync (on connect, then occasionally)
 - X4 does not ACK. Telemetry stamps `recv_ms`; time sync sets a free-running software clock.
+
+### Control (`…0003`) — X4 → hub
+- **Properties:** `notify`, `read`.
+- Hub **must** enable notifications (CCCD) after discovering the characteristic.
+- Message discriminator byte 0 = `0x20` (`BIKE_HUD_MSG_CONTROL`).
+- Used for device buttons that affect the **workout** (pause). Local-only UI actions (page flip, invert, sleep) stay on-device and do **not** appear here.
 
 ## Packet `BikeHudPacketV1` — telemetry (version = `1`)
 
@@ -69,6 +77,25 @@ Still **16 bytes**. Does **not** update ride metrics. HUD stores the instant and
 **Hub policy:** send once when the HUD becomes Ready; refresh every ~5 minutes while connected. Telemetry stays pure 16 B @ 1 Hz.
 
 **Design note:** the HUD is still “dumb” for *ride* data (no sensors). Wall clock is optional chrome that survives brief disconnects; after long power-off it simply disappears until the next sync.
+
+## Packet `BikeHudControlEvent` — X4 → hub (version = `0x20`)
+
+NOTIFIED on the **control** characteristic when a device button needs hub action.
+
+| Offset | Type | Field | Notes |
+|---|---|---|---|
+| 0 | `u8` | `version` | `0x20` (`BIKE_HUD_MSG_CONTROL`) |
+| 1 | `u8` | `event` | See event codes |
+| 2–15 | `u8[14]` | reserved | Write `0` |
+
+### Event codes (`event`)
+
+| Value | Name | Hub action |
+|---|---|---|
+| 0 | `EVT_NONE` | No-op |
+| 1 | `EVT_PAUSE_TOGGLE` | Toggle pause/resume if a session is live; ignore when idle |
+
+**HUD side:** Confirm button emits `EVT_PAUSE_TOGGLE`. Hub owns timer + GPS recording; after acting, hub continues writing telemetry with `FLAG_PAUSED` set/cleared so the X4 can show PAUSED chrome.
 
 ## Stale rules (telemetry only)
 

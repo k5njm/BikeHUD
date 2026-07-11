@@ -45,4 +45,21 @@ final class BikeHudPacketTests: XCTestCase {
     func testSpeedMph() {
         XCTAssertEqual(BikeHudPacketV1.testVector.speedMph, 15.66, accuracy: 0.05)
     }
+
+    func testControlEventRoundTrip() {
+        let evt = BikeHudControlEvent(event: .pauseToggle)
+        let data = evt.encode()
+        XCTAssertEqual(data.count, 16)
+        XCTAssertEqual([UInt8](data)[0], 0x20)
+        XCTAssertEqual([UInt8](data)[1], 1)
+        XCTAssertEqual(BikeHudControlEvent.decode(data), evt)
+        XCTAssertNil(BikeHudPacketV1.decode(data))
+    }
+
+    func testControlUUIDPresent() {
+        XCTAssertEqual(
+            BikeHudPacketV1.controlUUID,
+            "B10E0003-C0C0-41A3-B4C6-42494B454855"
+        )
+    }
 }

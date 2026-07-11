@@ -9,6 +9,8 @@ public struct BikeHudPacketV1: Equatable, Sendable {
 
     public static let serviceUUID = "B10E0001-C0C0-41A3-B4C6-42494B454855"
     public static let telemetryUUID = "B10E0002-C0C0-41A3-B4C6-42494B454855"
+    /// X4 → hub button / control events (notify).
+    public static let controlUUID = "B10E0003-C0C0-41A3-B4C6-42494B454855"
 
     public struct Flags: OptionSet, Sendable {
         public let rawValue: UInt8
@@ -196,6 +198,40 @@ public struct BikeHudTimeSync: Equatable, Sendable {
         data.append(contentsOf: [UInt8](repeating: 0, count: 6))
         assert(data.count == Self.size)
         return data
+    }
+}
+
+/// 16-byte X4 → hub control event (NOTIFY on control characteristic).
+public struct BikeHudControlEvent: Equatable, Sendable {
+    public static let messageType: UInt8 = 0x20
+    public static let size = 16
+
+    public enum Event: UInt8, Sendable {
+        case none = 0
+        case pauseToggle = 1
+    }
+
+    public var event: Event
+
+    public init(event: Event) {
+        self.event = event
+    }
+
+    public func encode() -> Data {
+        var data = Data(capacity: Self.size)
+        data.append(Self.messageType)
+        data.append(event.rawValue)
+        data.append(contentsOf: [UInt8](repeating: 0, count: 14))
+        assert(data.count == Self.size)
+        return data
+    }
+
+    public static func decode(_ data: Data) -> BikeHudControlEvent? {
+        guard data.count == size else { return nil }
+        let bytes = [UInt8](data)
+        guard bytes[0] == messageType else { return nil }
+        guard let event = Event(rawValue: bytes[1]) else { return nil }
+        return BikeHudControlEvent(event: event)
     }
 }
 

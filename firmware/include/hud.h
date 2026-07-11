@@ -27,3 +27,9 @@ void hud_wake_from_sleep();
 
 /** Force next hud_update to full-refresh (after soft-wake). */
 void hud_force_full_redraw();
+
+/** Toggle black-on-white / white-on-black ride UI (full refresh next paint). */
+void hud_toggle_invert();
+
+/** True when ride UI uses inverse (black paper / white ink). */
+bool hud_is_inverted();

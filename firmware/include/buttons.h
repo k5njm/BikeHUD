@@ -23,3 +23,10 @@ BoardButton buttons_poll();
  * Used for CrossPoint-style long-press sleep (see power.h).
  */
 uint32_t buttons_power_held_ms();
+
+/**
+ * Clear the power hold timer (call on sleep / wake edges).
+ * Without this, a long soft-sleep leaves `down_since` stale; the first
+ * LOW sample after wake reports an enormous hold and immediately re-sleeps.
+ */
+void buttons_power_reset_hold();

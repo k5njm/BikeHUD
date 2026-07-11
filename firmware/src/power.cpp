@@ -16,6 +16,9 @@
 namespace {
 
 uint32_t g_last_activity_ms = 0;
+/** Ignore sleep re-entry for a short window after soft-wake (button bounce). */
+uint32_t g_sleep_guard_until_ms = 0;
+constexpr uint32_t kPostWakeSleepGuardMs = 800;
 
 bool power_is_down() { return digitalRead(PIN_BTN_POWER) == LOW; }
 
@@ -66,15 +69,39 @@ void wait_fresh_long_press(uint32_t hold_ms) {
 
 void power_note_activity() { g_last_activity_ms = millis(); }
 
+bool power_sleep_guard_active(uint32_t now_ms) {
+  if (g_sleep_guard_until_ms == 0) {
+    return false;
+  }
+  // Handle millis wrap: if until is in the past window, clear it.
+  if ((int32_t)(g_sleep_guard_until_ms - now_ms) <= 0) {
+    g_sleep_guard_until_ms = 0;
+    return false;
+  }
+  return true;
+}
+
 void power_poll_auto_sleep(uint32_t now_ms) {
+  // Use the freshest clock: buttons call power_note_activity() mid-loop with
+  // millis(), which can be *after* the stale `now` captured at loop entry.
+  // Treating that as unsigned (now - activity) underflows to ~4e9 ms and
+  // immediately trips the 10‑minute idle sleep.
+  const uint32_t now = millis();
+  (void)now_ms;
+
+  if (power_sleep_guard_active(now)) {
+    return;
+  }
   if (kAutoSleepIdleMs == 0) {
     return;
   }
   if (g_last_activity_ms == 0) {
-    g_last_activity_ms = now_ms;
+    g_last_activity_ms = now;
     return;
   }
-  if (now_ms - g_last_activity_ms >= kAutoSleepIdleMs) {
+  // Signed delta: if activity is ahead of `now` (same-tick race), idle is 0.
+  const int32_t idle_ms = (int32_t)(now - g_last_activity_ms);
+  if (idle_ms >= (int32_t)kAutoSleepIdleMs) {
     Serial.printf("[power] auto-sleep after %lu ms idle\n",
                   (unsigned long)kAutoSleepIdleMs);
     power_enter_sleep();
@@ -84,6 +111,10 @@ void power_poll_auto_sleep(uint32_t now_ms) {
 void power_enter_sleep() {
   Serial.println("[power] === SLEEP BEGIN ===");
   Serial.flush();
+
+  // Drop any pre-sleep hold state so a later sample later cannot look "held
+  // for hours". Soft-sleep blocks in this function for a long time.
+  buttons_power_reset_hold();
 
   // Keep battery latch ON for soft-sleep (do not cut the rail).
   pinMode(PIN_PWR_LATCH, OUTPUT);
@@ -106,6 +137,7 @@ void power_enter_sleep() {
   Serial.println("[power] wait for release");
   Serial.flush();
   wait_power_up_stable(300);
+  buttons_power_reset_hold();
   delay(100);
 
   // Stay here until a *new* long-press. Splash remains on e-ink.
@@ -116,6 +148,11 @@ void power_enter_sleep() {
   pinMode(PIN_PWR_LATCH, OUTPUT);
   digitalWrite(PIN_PWR_LATCH, HIGH);
 
+  // Critical: clear hold timer before returning to loop. Otherwise the first
+  // bounce-LOW reuses a pre-sleep `down_since` and held_ms looks enormous →
+  // immediate re-entry into this function (splash bounce).
+  buttons_power_reset_hold();
+
   Serial.println("[power] restoring display + BLE");
   Serial.flush();
   hud_wake_from_sleep();
@@ -123,6 +160,10 @@ void power_enter_sleep() {
   ble_service_resume_from_sleep();
 #endif
   power_note_activity();
+  g_sleep_guard_until_ms = millis() + kPostWakeSleepGuardMs;
+  if (g_sleep_guard_until_ms == 0) {
+    g_sleep_guard_until_ms = 1; // keep "active" if millis wraps to 0
+  }
   Serial.println("[power] === AWAKE ===");
   Serial.flush();
 }

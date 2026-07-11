@@ -27,7 +27,18 @@ uint16_t g_partials_since_full = 0;
 Telemetry::Freshness g_last_fresh = Telemetry::Freshness::Empty;
 bool g_last_ble_linked = false;
 bool g_page_dirty = false;
+bool g_force_full = false; // invert / wake / explicit full
 uint8_t g_last_clock_minute = 255; // force first clock paint
+bool g_ui_inverted = false; // black field / white ink when true
+
+/** Foreground (glyphs, lines) — opposite of paper. */
+inline uint16_t ink() {
+  return g_ui_inverted ? GxEPD_WHITE : GxEPD_BLACK;
+}
+/** Background fill. */
+inline uint16_t paper() {
+  return g_ui_inverted ? GxEPD_BLACK : GxEPD_WHITE;
+}
 
 // Partial updates leave faint "ghost" residual. Full waveform (invert flash)
 // clears it — but is only needed after many partials, not on a static desk
@@ -151,10 +162,10 @@ void drawHSegHex(int16_t x, int16_t y, int16_t w, int16_t h) {
   const int16_t y0 = y;
   const int16_t y1 = y + h - 1;
   // Two triangles + center rect
-  display.fillTriangle(x0, ym, x1, y0, x1, y1, GxEPD_BLACK);
-  display.fillTriangle(x3, ym, x2, y0, x2, y1, GxEPD_BLACK);
+  display.fillTriangle(x0, ym, x1, y0, x1, y1, ink());
+  display.fillTriangle(x3, ym, x2, y0, x2, y1, ink());
   if (x2 > x1) {
-    display.fillRect(x1, y0, x2 - x1 + 1, h, GxEPD_BLACK);
+    display.fillRect(x1, y0, x2 - x1 + 1, h, ink());
   }
 }
 
@@ -170,10 +181,10 @@ void drawVSegHex(int16_t x, int16_t y, int16_t w, int16_t h) {
   const int16_t y3 = y + h - 1;
   const int16_t xl = x;
   const int16_t xr = x + w - 1;
-  display.fillTriangle(xm, y0, xl, y1, xr, y1, GxEPD_BLACK);
-  display.fillTriangle(xm, y3, xl, y2, xr, y2, GxEPD_BLACK);
+  display.fillTriangle(xm, y0, xl, y1, xr, y1, ink());
+  display.fillTriangle(xm, y3, xl, y2, xr, y2, ink());
   if (y2 > y1) {
-    display.fillRect(xl, y1, w, y2 - y1 + 1, GxEPD_BLACK);
+    display.fillRect(xl, y1, w, y2 - y1 + 1, ink());
   }
 }
 
@@ -279,7 +290,7 @@ void drawHeroNumber(int16_t box_x, int16_t box_y, int16_t box_w, int16_t box_h,
   for (const char *p = text; *p; ++p) {
     if (*p == '.') {
       display.fillRect(cx + (dot_w - dsz) / 2, cy + dh - dsz - 6, dsz, dsz,
-                       GxEPD_BLACK);
+                       ink());
       cx += dot_w + gap / 2;
     } else {
       drawSegDigit(cx, cy, dw, dh, charToSeg(*p));
@@ -363,7 +374,7 @@ void drawSparkline(int16_t x, int16_t y, int16_t w, int16_t h,
     lo--;
   span = (uint8_t)(span + 1);
 
-  display.drawRect(x, y, w, h, GxEPD_BLACK);
+  display.drawRect(x, y, w, h, ink());
   const int16_t base = y + h - 2;
   const int16_t inner_w = w - 3;
   const int16_t inner_h = h - 4;
@@ -390,11 +401,11 @@ void drawSparkline(int16_t x, int16_t y, int16_t w, int16_t h,
         }
         // Hatch fill (every other column) so charts don't read as solid ink.
         if (!flat && (xx & 1) == 0 && base >= top) {
-          display.drawFastVLine(xx, top, base - top + 1, GxEPD_BLACK);
+          display.drawFastVLine(xx, top, base - top + 1, ink());
         }
       }
-      display.drawLine(prev_px, prev_py, px, py, GxEPD_BLACK);
-      display.drawLine(prev_px, prev_py + 1, px, py + 1, GxEPD_BLACK);
+      display.drawLine(prev_px, prev_py, px, py, ink());
+      display.drawLine(prev_px, prev_py + 1, px, py + 1, ink());
     }
     prev_px = px;
     prev_py = py;
@@ -410,8 +421,8 @@ constexpr int16_t kLabelBaseline = 20; // from cell top → ~8px clear above gly
 void drawMetricCellText(int16_t x, int16_t y, int16_t w, int16_t h,
                         const char *label, const char *value,
                         const GFXfont *value_font) {
-  display.drawRect(x, y, w, h, GxEPD_BLACK);
-  display.drawRect(x + 1, y + 1, w - 2, h - 2, GxEPD_BLACK);
+  display.drawRect(x, y, w, h, ink());
+  display.drawRect(x + 1, y + 1, w - 2, h - 2, ink());
 
   drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + kLabelBaseline, label);
 
@@ -430,8 +441,8 @@ void drawMetricCellText(int16_t x, int16_t y, int16_t w, int16_t h,
 void drawTrendCell(int16_t x, int16_t y, int16_t w, int16_t h,
                    const char *label, const char *value,
                    const MetricSeries &series, bool show_stats) {
-  display.drawRect(x, y, w, h, GxEPD_BLACK);
-  display.drawRect(x + 1, y + 1, w - 2, h - 2, GxEPD_BLACK);
+  display.drawRect(x, y, w, h, ink());
+  display.drawRect(x + 1, y + 1, w - 2, h - 2, ink());
 
   const int16_t stats_h = 14;
   const int16_t spark_h = 44;
@@ -459,7 +470,7 @@ void drawTrendCell(int16_t x, int16_t y, int16_t w, int16_t h,
     snprintf(stats, sizeof(stats), "avg %u  hi %u  lo %u", avg, hi, lo);
     drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + h - 5, stats);
   } else {
-    display.drawRect(sx, sy, sw, spark_h, GxEPD_BLACK);
+    display.drawRect(sx, sy, sw, spark_h, ink());
     drawLabelLeft(&FreeSansBold9pt7b, x + 8, y + h - 5, "avg --  hi --  lo --");
   }
   (void)show_stats;
@@ -471,8 +482,8 @@ constexpr int16_t kStatusH = 36;
 
 void drawStatusBar(const Telemetry &tel, Telemetry::Freshness f, bool linked) {
   const int16_t W = display.width();
-  display.fillRect(0, 0, W, kStatusH, GxEPD_WHITE);
-  display.drawFastHLine(0, kStatusH - 1, W, GxEPD_BLACK);
+  display.fillRect(0, 0, W, kStatusH, paper());
+  display.drawFastHLine(0, kStatusH - 1, W, ink());
 
   // Left: "BikeHUD  Fri Jul 10 · 18:34" (clock free-runs after TIME_SYNC)
   char left[48];
@@ -502,8 +513,8 @@ void paintPage0(const Telemetry &tel, bool show_values) {
   // Hero panel under status bar
   const int16_t hero_y = kStatusH;
   const int16_t hero_h = 280;
-  display.drawRect(0, hero_y, W, hero_h, GxEPD_BLACK);
-  display.drawRect(1, hero_y + 1, W - 2, hero_h - 2, GxEPD_BLACK);
+  display.drawRect(0, hero_y, W, hero_h, ink());
+  display.drawRect(1, hero_y + 1, W - 2, hero_h - 2, ink());
 
   drawLabelLeft(&FreeSansBold12pt7b, 14, hero_y + 28, "NOW");
   {
@@ -625,8 +636,8 @@ void paintPage2(const Telemetry &tel, Telemetry::Freshness f, bool linked) {
   const int16_t H = display.height();
   const int16_t top = kStatusH;
 
-  display.drawRect(0, top, W, H - top, GxEPD_BLACK);
-  display.drawRect(1, top + 1, W - 2, H - top - 2, GxEPD_BLACK);
+  display.drawRect(0, top, W, H - top, ink());
+  display.drawRect(1, top + 1, W - 2, H - top - 2, ink());
 
   char line[48];
   int16_t y = top + 40;
@@ -677,7 +688,7 @@ void paintFrame(const Telemetry &tel, Telemetry::Freshness f, bool linked,
                 bool partial) {
   // 3 = 180° from previous rotation(1); portrait 480×800 on X4.
   display.setRotation(3);
-  display.setTextColor(GxEPD_BLACK);
+  display.setTextColor(ink());
 
   if (partial) {
     display.setPartialWindow(0, 0, display.width(), display.height());
@@ -687,7 +698,7 @@ void paintFrame(const Telemetry &tel, Telemetry::Freshness f, bool linked,
 
   display.firstPage();
   do {
-    display.fillScreen(GxEPD_WHITE);
+    display.fillScreen(paper());
     drawStatusBar(tel, f, linked);
 
     const bool show =
@@ -753,8 +764,8 @@ void hud_update(const Telemetry &tel, uint32_t now_ms, bool ble_linked) {
       g_partials_since_full >= kPartialsBeforeFull &&
       (now_ms - g_last_full_ms) >= kFullRefreshIntervalMs;
 
-  bool dirty =
-      page_changed || fresh_changed || link_changed || due_full || clock_tick;
+  bool dirty = page_changed || fresh_changed || link_changed || due_full ||
+               clock_tick || g_force_full;
   if (new_packet) {
     if (g_last_drawn_ms == 0 ||
         (now_ms - g_last_drawn_ms) >= kMinPartialIntervalMs) {
@@ -766,15 +777,16 @@ void hud_update(const Telemetry &tel, uint32_t now_ms, bool ble_linked) {
     return;
   }
 
-  const bool force_full = due_full;
-  paintFrame(tel, f, ble_linked, /*partial=*/!force_full);
+  const bool do_full = due_full || g_force_full;
+  paintFrame(tel, f, ble_linked, /*partial=*/!do_full);
 
   g_last_drawn_ms = now_ms;
   g_last_write_seen = tel.write_count;
   g_last_fresh = f;
   g_last_ble_linked = ble_linked;
   g_page_dirty = false;
-  if (force_full) {
+  g_force_full = false;
+  if (do_full) {
     g_last_full_ms = now_ms;
     g_partials_since_full = 0;
   } else {
@@ -797,11 +809,18 @@ void hud_prev_page() {
 uint8_t hud_current_page() { return g_page; }
 
 void hud_force_full_redraw() {
-  g_last_full_ms = 0;
   g_last_drawn_ms = 0;
   g_page_dirty = true;
-  g_partials_since_full = kPartialsBeforeFull; // allow due_full path
+  g_force_full = true; // always full waveform (invert / wake / explicit)
 }
+
+void hud_toggle_invert() {
+  g_ui_inverted = !g_ui_inverted;
+  Serial.printf("[hud] invert %s\n", g_ui_inverted ? "ON (black paper)" : "OFF");
+  hud_force_full_redraw();
+}
+
+bool hud_is_inverted() { return g_ui_inverted; }
 
 void hud_wake_from_sleep() {
   // After hibernate(), re-init before any paint.
@@ -810,41 +829,199 @@ void hud_wake_from_sleep() {
   hud_force_full_redraw();
 }
 
+/** Road-bike silhouette (white on black splash). Anchor at geometric center. */
+void drawBikeSilhouette(int16_t cx, int16_t cy, int16_t scale) {
+  // scale ≈ half wheelbase (~90–110 for portrait banner).
+  const int16_t r = (int16_t)(scale * 0.36f); // wheel radius
+  const int16_t rim = (r > 18) ? 5 : 4;        // tire thickness
+  const uint16_t col = GxEPD_WHITE;
+
+  auto thickLine = [&](int16_t x0, int16_t y0, int16_t x1, int16_t y1,
+                       int16_t bold = 2) {
+    for (int16_t o = 0; o < bold; o++) {
+      display.drawLine(x0 + o, y0, x1 + o, y1, col);
+      display.drawLine(x0, y0 + o, x1, y1 + o, col);
+    }
+  };
+
+  auto drawWheel = [&](int16_t hx, int16_t hy) {
+    // Tire ring
+    for (int16_t t = 0; t < rim; t++) {
+      display.drawCircle(hx, hy, r - t, col);
+    }
+    // Inner rim line
+    display.drawCircle(hx, hy, r - rim - 2, col);
+
+    // 12 radial spokes from hub to inner rim
+    const int16_t spoke_in = 3;
+    const int16_t spoke_out = r - rim - 1;
+    for (int i = 0; i < 12; i++) {
+      // 30° steps via integer cos/sin of 0,30,60... using small lookup
+      // (avoid float per-spoke of doubles; fixed 0.5° table not needed)
+      static const int8_t kCos12[12] = {100, 87, 50, 0, -50, -87,
+                                       -100, -87, -50, 0, 50, 87};
+      static const int8_t kSin12[12] = {0, 50, 87, 100, 87, 50,
+                                       0, -50, -87, -100, -87, -50};
+      const int16_t dx_o = (int16_t)((int32_t)spoke_out * kCos12[i] / 100);
+      const int16_t dy_o = (int16_t)((int32_t)spoke_out * kSin12[i] / 100);
+      const int16_t dx_i = (int16_t)((int32_t)spoke_in * kCos12[i] / 100);
+      const int16_t dy_i = (int16_t)((int32_t)spoke_in * kSin12[i] / 100);
+      display.drawLine(hx + dx_i, hy + dy_i, hx + dx_o, hy + dy_o, col);
+    }
+    display.fillCircle(hx, hy, 4, col); // hub
+  };
+
+  // --- Geometry (classic road diamond, side view, drive-side rearward) ---
+  // Wheel centers on a horizontal axle line
+  const int16_t rear_x = cx - scale / 2;
+  const int16_t front_x = cx + scale / 2;
+  const int16_t axle_y = cy + scale / 10;
+
+  drawWheel(rear_x, axle_y);
+  drawWheel(front_x, axle_y);
+
+  // Key frame landmarks (tuned for silhouette recognizability).
+  // Steering axis is one continuous line: stem mount → head tube → crown →
+  // fork blade → front hub. Real road geometry is raked (~72°), so the head
+  // sits a bit behind the hub and the fork runs forward-down to the axle.
+  const int16_t bb_x = cx - scale / 14;        // bottom bracket
+  const int16_t bb_y = axle_y + r / 10;        // slightly below axle line
+  const int16_t seat_joint_x = cx - scale / 5; // seat-tube / top-tube join
+  const int16_t seat_joint_y = axle_y - (int16_t)(r * 1.15f);
+
+  // Head tube top — behind front hub; tall enough for bars to clear tire.
+  const int16_t head_top_x = front_x - (int16_t)(r * 0.95f);
+  const int16_t head_top_y = axle_y - (int16_t)(r * 1.30f);
+  // Crown at base of head tube, still on the same steerer axis toward hub.
+  // Place crown ~42% of the way from hub up toward head top.
+  const int16_t crown_x =
+      front_x + (int16_t)(((int32_t)head_top_x - front_x) * 42 / 100);
+  const int16_t crown_y =
+      axle_y + (int16_t)(((int32_t)head_top_y - axle_y) * 42 / 100);
+
+  // Rear triangle: seat stay + chain stay (pair for depth)
+  thickLine(rear_x, axle_y - 2, seat_joint_x, seat_joint_y, 2);
+  thickLine(rear_x, axle_y + 2, seat_joint_x - 2, seat_joint_y + 4, 2);
+  thickLine(rear_x, axle_y - 1, bb_x, bb_y, 2);
+  thickLine(rear_x, axle_y + 2, bb_x - 2, bb_y, 2);
+
+  // Main diamond: seat tube, down tube, top tube
+  thickLine(bb_x, bb_y, seat_joint_x, seat_joint_y, 3);         // seat tube
+  thickLine(bb_x, bb_y, crown_x, crown_y, 3);                   // down tube
+  thickLine(seat_joint_x, seat_joint_y, head_top_x, head_top_y, 3); // top tube
+
+  // Head tube (thick), then straight continuous fork into the hub.
+  thickLine(crown_x, crown_y, head_top_x, head_top_y, 3);
+  thickLine(crown_x + 2, crown_y, head_top_x + 2, head_top_y, 2);
+  // Crown transition
+  display.fillCircle(crown_x, crown_y, 4, col);
+  // Fork blade: single continuous beam crown → front hub (side-view silhouette)
+  thickLine(crown_x, crown_y, front_x, axle_y, 3);
+  thickLine(crown_x + 2, crown_y + 1, front_x + 1, axle_y, 2);
+
+  // Crank + chainring + pedal
+  display.fillCircle(bb_x, bb_y, 7, col);
+  display.drawCircle(bb_x, bb_y, 10, col);
+  display.drawCircle(bb_x, bb_y, 11, col);
+  const int16_t crank_x = bb_x + (int16_t)(r * 0.55f);
+  const int16_t crank_y = bb_y + (int16_t)(r * 0.35f);
+  thickLine(bb_x, bb_y, crank_x, crank_y, 2);
+  // Pedal plate
+  display.fillRect(crank_x - 2, crank_y - 3, 12, 6, col);
+
+  // Seat post + saddle (road profile side view)
+  const int16_t post_top_x = seat_joint_x - scale / 40;
+  const int16_t post_top_y = seat_joint_y - (int16_t)(r * 0.38f);
+  thickLine(seat_joint_x, seat_joint_y, post_top_x, post_top_y, 2);
+  // Saddle: longer nose, slight slope, rear pad
+  const int16_t sad_nose_x = post_top_x + scale / 9;
+  const int16_t sad_tail_x = post_top_x - scale / 11;
+  const int16_t sad_y = post_top_y - 1;
+  thickLine(sad_tail_x, sad_y + 2, post_top_x, sad_y, 2);
+  thickLine(post_top_x, sad_y, sad_nose_x, sad_y + 3, 2);
+  // Saddle thickness (filled rear)
+  display.fillTriangle(sad_tail_x, sad_y + 2, post_top_x + 2, sad_y - 2,
+                       post_top_x + 2, sad_y + 4, col);
+  display.fillTriangle(post_top_x, sad_y, sad_nose_x, sad_y + 3,
+                       post_top_x, sad_y + 3, col);
+
+  // Drop bars: raised above the front tire (stem → tops → hoods → short drops).
+  // Previous curves dropped far enough to clip the front wheel rim.
+  const int16_t stem_end_x = head_top_x + scale / 11;
+  const int16_t stem_end_y = head_top_y - scale / 12; // stem rises
+  thickLine(head_top_x, head_top_y, stem_end_x, stem_end_y, 2);
+
+  const int16_t tops_x = stem_end_x + scale / 12; // bar tops forward
+  const int16_t tops_y = stem_end_y - scale / 40;
+  thickLine(stem_end_x, stem_end_y, tops_x, tops_y, 2);
+
+  // Hood bulge (brake lever body) — stays up near the tops
+  const int16_t hood_cx = tops_x + scale / 24;
+  const int16_t hood_cy = tops_y + scale / 28;
+  display.fillCircle(hood_cx, hood_cy, scale / 20, col);
+  display.fillCircle(hood_cx + 2, hood_cy, scale / 24, col);
+
+  // Compact drop: tight C that ends well above the front tire.
+  const int16_t drop_r = scale / 12;
+  const int16_t drop_cx = tops_x;
+  const int16_t drop_cy = tops_y + drop_r;
+  int16_t prev_x = tops_x;
+  int16_t prev_y = tops_y;
+  // 6 steps, mostly forward+down then slightly aft — stop before 6 o'clock
+  static const int8_t kDropCos[6] = {95, 87, 50, 0, -50, -71};
+  static const int8_t kDropSin[6] = {-31, 50, 87, 100, 87, 71};
+  for (int i = 0; i < 6; i++) {
+    const int16_t px =
+        drop_cx + (int16_t)((int32_t)drop_r * kDropCos[i] / 100);
+    const int16_t py =
+        drop_cy + (int16_t)((int32_t)drop_r * kDropSin[i] / 100);
+    thickLine(prev_x, prev_y, px, py, 2);
+    prev_x = px;
+    prev_y = py;
+  }
+  display.fillCircle(prev_x, prev_y, 3, col); // bar-end
+}
+
 void hud_show_sleep_splash() {
   // Ensure panel is awake if we ever call this twice.
+  // Inverted: black field, white ink (and white bike).
   display.setRotation(3);
-  display.setTextColor(GxEPD_BLACK);
+  display.setTextColor(GxEPD_WHITE);
   display.setFullWindow();
 
   display.firstPage();
   do {
-    display.fillScreen(GxEPD_WHITE);
+    display.fillScreen(GxEPD_BLACK);
     const int16_t W = display.width();
     const int16_t H = display.height();
 
-    display.drawRect(12, 12, W - 24, H - 24, GxEPD_BLACK);
-    display.drawRect(14, 14, W - 28, H - 28, GxEPD_BLACK);
+    // Double white frame
+    display.drawRect(12, 12, W - 24, H - 24, GxEPD_WHITE);
+    display.drawRect(14, 14, W - 28, H - 28, GxEPD_WHITE);
+
+    // Bike badge upper half
+    drawBikeSilhouette(W / 2, H / 2 - 120, 100);
 
     display.setFont(&FreeSansBold24pt7b);
     const char *title = "BikeHUD";
     int16_t x1, y1;
     uint16_t tw, th;
     display.getTextBounds(title, 0, 0, &x1, &y1, &tw, &th);
-    display.setCursor((W - (int16_t)tw) / 2 - x1, H / 2 - 40);
+    display.setCursor((W - (int16_t)tw) / 2 - x1, H / 2 + 20);
     display.print(title);
 
-    display.drawFastHLine(W / 4, H / 2 - 10, W / 2, GxEPD_BLACK);
+    display.drawFastHLine(W / 4, H / 2 + 40, W / 2, GxEPD_WHITE);
 
     display.setFont(&FreeSansBold18pt7b);
     const char *sleeping = "Sleeping";
     display.getTextBounds(sleeping, 0, 0, &x1, &y1, &tw, &th);
-    display.setCursor((W - (int16_t)tw) / 2 - x1, H / 2 + 30);
+    display.setCursor((W - (int16_t)tw) / 2 - x1, H / 2 + 90);
     display.print(sleeping);
 
     display.setFont(&FreeSansBold12pt7b);
     const char *hint = "hold power to wake";
     display.getTextBounds(hint, 0, 0, &x1, &y1, &tw, &th);
-    display.setCursor((W - (int16_t)tw) / 2 - x1, H / 2 + 70);
+    display.setCursor((W - (int16_t)tw) / 2 - x1, H / 2 + 130);
     display.print(hint);
   } while (display.nextPage());
 

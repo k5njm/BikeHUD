@@ -15,12 +15,20 @@ CrossPoint drives GPIO13 low + hold before deep sleep. On battery the MCU is the
 
 ### Manual sleep — **soft-sleep only**
 1. Hold power ≥ **500 ms**  
-2. Splash full-refresh: **BikeHUD / Sleeping / hold power to wake**  
+2. Splash full-refresh (**inverted**: black bg, white text + bike silhouette)  
 3. **Release** the button completely  
-4. Device stays on splash (MCU idle, BLE off)  
+4. Device stays on splash (MCU idle, BLE off / paused)  
 5. Hold power ≥ **500 ms** again to wake → BLE + UI  
 
 Deep sleep was bouncing (black → white → ride UI) before the splash could stick, especially with USB-Serial/JTAG. Soft-sleep is intentional until battery deep-sleep is revalidated.
+
+### Wake / auto-sleep pitfalls (fixed)
+
+| Bug | Failure | Fix |
+|---|---|---|
+| NimBLE `deinit` while connected | heap free assert, bounce off splash | `ble_service_shutdown_for_sleep()` pauses only |
+| Stale `buttons_power_held_ms` | soft-wake immediately re-sleeps | `buttons_power_reset_hold()` + ~800 ms sleep guard |
+| Mid-loop `power_note_activity()` then `poll(stale_now)` | unsigned `(now - activity)` underflows → “10 min idle” after a few seconds | re-read `millis()` + signed idle delta |
 
 ### Auto-sleep
 After **10 minutes** with no:
@@ -47,14 +55,21 @@ Serial (115200) on long-press:
 
 ```
 [power] === SLEEP BEGIN ===
-[power] stopping BLE
+[ble] shutdown for sleep
+[ble] radio paused (no deinit)
 [power] drawing splash
 [power] splash done
 [power] wait for release
 [power] armed — hold power to wake
+… (hold to wake) …
+[power] wake press accepted
+[power] restoring display + BLE
+[power] === AWAKE ===
 ```
 
-If you never see `SLEEP BEGIN`, the hold detector isn’t firing. If you see splash then immediately `AWAKE`, the wake path accepted a press too early.
+If you never see `SLEEP BEGIN`, the hold detector isn’t firing.  
+If you see `AWAKE` then immediately another `SLEEP BEGIN`, the post-wake hold/guard path is broken.  
+If you never leave the splash after arming, the wake long-press isn’t accepted.
 
 ## If wake fails
 

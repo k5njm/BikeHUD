@@ -16,10 +16,15 @@
 
 ## Phase 1 — BLE loop
 
-- [ ] Flash X4, verify free heap > 80 KB with continuous writes  
+- [x] Flash X4, verify free heap > 80 KB with continuous writes  
 - [ ] nRF Connect or macOS light tester writes test vector  
-- [ ] Stale/weak-link UI behaves on desk  
-- [ ] Button page flip works  
+- [x] Stale/weak-link UI behaves on desk  
+- [x] Button page flip works (CrossPoint ADC ladder ranges + 11 dB attenuation)  
+- [x] Soft-sleep on long power press (no NimBLE deinit crash; wake hold timer fix)  
+- [x] Inverted sleep splash + bike silhouette  
+- [x] Side/front button map: pages · Confirm pause notify · Back invert  
+- [x] Control characteristic `B10E0003` (X4 → hub `PAUSE_TOGGLE`)  
+- [x] Auto-sleep idle timer safe vs mid-loop `power_note_activity()`  
 
 ## Phase 2 — iOS hub (rideable, no cadence)
 
@@ -27,6 +32,8 @@
 - [x] `CBCentralManager` connect to `BikeHUD`, 1 Hz writes  
 - [x] Demo ride (desk) + GPS ride (Core Location)  
 - [x] Background modes: location + bluetooth-central (plist)  
+- [x] Control notify: subscribe + `togglePause()` from HUD Confirm  
+- [ ] Rebuild / on-device retest of control + pause with latest package  
 - [ ] Signing / on-device test with live X4  
 - [ ] HealthKit HR  
 - [ ] Jersey-pocket ride: phone locked, Watch worn, X4 shows HR + speed  

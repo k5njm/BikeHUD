@@ -2,64 +2,111 @@
 
 #include "board_pins.h"
 
+/**
+ * ADC ladder decode — lifted from CrossPoint open-x4-sdk InputManager.
+ *
+ * Recorded ADC values from real devices
+ * BACK CONF LEFT RGHT   UP DOWN
+ * 3597 2760 1530    6 2300    6
+ * 3470 2666 1480    6 2222    5
+ * 3470 2655 1470    3 2205    3
+ *
+ * Averages → range midpoints → bins (open ranges, device-tolerant):
+ *   ADC1: Back / Confirm / Left / Right
+ *   ADC2: Up / Down
+ *   Idle (no press) ≈ 4095; treat anything above ADC_NO_BUTTON as none.
+ */
+
 namespace {
 
-// Thresholds from xteink-x4-sample (approximate resistor-ladder midpoints).
-constexpr int kTol = 120;
-
-constexpr int kRight = 3;
-constexpr int kLeft = 1470;
-constexpr int kConfirm = 2655;
-constexpr int kBack = 3470;
-constexpr int kVolDown = 3;
-constexpr int kVolUp = 2205;
+// Same bins as CrossPoint InputManager::ADC_RANGES_*.
+// If ADC is between ranges[i+1] and ranges[i] (exclusive lower, inclusive upper),
+// button index i is pressed.
+constexpr int kAdcNoButton = 3900;
+constexpr int kRanges1[] = {kAdcNoButton, 3100, 2090, 750, INT32_MIN}; // 4 front
+constexpr int kRanges2[] = {kAdcNoButton, 1120, INT32_MIN};            // 2 side
+constexpr int kNumFront = 4;
+constexpr int kNumSide = 2;
 
 BoardButton last_stable = BoardButton::None;
 BoardButton last_emitted = BoardButton::None;
 uint32_t last_change_ms = 0;
-constexpr uint32_t kDebounceMs = 40;
+constexpr uint32_t kDebounceMs = 20; // CrossPoint uses 5; keep a bit more margin
 
-bool near(int v, int target) {
-  return abs(v - target) <= kTol;
+int buttonFromAdc(int adcValue, const int *ranges, int numButtons) {
+  for (int i = 0; i < numButtons; i++) {
+    if (ranges[i + 1] < adcValue && adcValue <= ranges[i]) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+const char *btnName(BoardButton b) {
+  switch (b) {
+  case BoardButton::Right:
+    return "Right";
+  case BoardButton::Left:
+    return "Left";
+  case BoardButton::Confirm:
+    return "Confirm";
+  case BoardButton::Back:
+    return "Back";
+  case BoardButton::VolumeUp:
+    return "VolUp";
+  case BoardButton::VolumeDown:
+    return "VolDown";
+  case BoardButton::Power:
+    return "Power";
+  default:
+    return "None";
+  }
 }
 
 BoardButton decode() {
-  const int a1 = analogRead(PIN_BTN_ADC1);
-  const int a2 = analogRead(PIN_BTN_ADC2);
-
   if (digitalRead(PIN_BTN_POWER) == LOW) {
     return BoardButton::Power;
   }
-  if (near(a1, kRight)) {
-    return BoardButton::Right;
-  }
-  if (near(a1, kLeft)) {
-    return BoardButton::Left;
-  }
-  if (near(a1, kConfirm)) {
-    return BoardButton::Confirm;
-  }
-  if (near(a1, kBack)) {
+
+  // Front ladder GPIO1: Back, Confirm, Left, Right (CrossPoint order).
+  const int a1 = analogRead(PIN_BTN_ADC1);
+  const int front = buttonFromAdc(a1, kRanges1, kNumFront);
+  if (front == 0) {
     return BoardButton::Back;
   }
-  if (near(a2, kVolUp)) {
+  if (front == 1) {
+    return BoardButton::Confirm;
+  }
+  if (front == 2) {
+    return BoardButton::Left;
+  }
+  if (front == 3) {
+    return BoardButton::Right;
+  }
+
+  // Side ladder GPIO2: Up, Down (CrossPoint names Vol-ish physical sides).
+  const int a2 = analogRead(PIN_BTN_ADC2);
+  const int side = buttonFromAdc(a2, kRanges2, kNumSide);
+  if (side == 0) {
     return BoardButton::VolumeUp;
   }
-  if (near(a2, kVolDown) && a2 < 200) {
-    // VolDown and floating low can alias — only treat as press if clearly low
-    // while a1 is idle (not also pressed). Best-effort.
-    if (a1 > 3800) {
-      return BoardButton::VolumeDown;
-    }
+  if (side == 1) {
+    return BoardButton::VolumeDown;
   }
+
   return BoardButton::None;
 }
+
+uint32_t g_power_down_since = 0;
 
 } // namespace
 
 void buttons_begin() {
   pinMode(PIN_BTN_POWER, INPUT_PULLUP);
-  // ADC pins default to analog on ESP32-C3
+  pinMode(PIN_BTN_ADC1, INPUT);
+  pinMode(PIN_BTN_ADC2, INPUT);
+  // Critical: CrossPoint uses 11dB so ladder voltages land in measured bins.
+  analogSetAttenuation(ADC_11db);
   analogReadResolution(12);
 }
 
@@ -84,6 +131,9 @@ BoardButton buttons_poll() {
 
   if (now != BoardButton::None && now != last_emitted) {
     last_emitted = now;
+    const int a1 = analogRead(PIN_BTN_ADC1);
+    const int a2 = analogRead(PIN_BTN_ADC2);
+    Serial.printf("[btn] %s  a1=%d a2=%d\n", btnName(now), a1, a2);
     return now;
   }
 
@@ -94,16 +144,17 @@ BoardButton buttons_poll() {
 }
 
 uint32_t buttons_power_held_ms() {
-  static uint32_t down_since = 0;
   if (digitalRead(PIN_BTN_POWER) == LOW) {
-    if (down_since == 0) {
-      down_since = millis();
-      if (down_since == 0) {
-        down_since = 1;
+    if (g_power_down_since == 0) {
+      g_power_down_since = millis();
+      if (g_power_down_since == 0) {
+        g_power_down_since = 1;
       }
     }
-    return millis() - down_since;
+    return millis() - g_power_down_since;
   }
-  down_since = 0;
+  g_power_down_since = 0;
   return 0;
 }
+
+void buttons_power_reset_hold() { g_power_down_since = 0; }

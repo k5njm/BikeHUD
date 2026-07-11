@@ -21,3 +21,9 @@ void ble_service_shutdown_for_sleep();
 
 /** Restart advertising after soft-sleep (if stack still alive). */
 void ble_service_resume_from_sleep();
+
+/**
+ * Notify the hub of a control event (e.g. pause toggle from a side button).
+ * No-op if nobody is connected / subscribed. Returns true if notified.
+ */
+bool ble_service_notify_control_event(uint8_t event);

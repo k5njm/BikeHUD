@@ -21,12 +21,17 @@ final class HudBleClient: NSObject, ObservableObject {
     @Published private(set) var writeCount: UInt64 = 0
     @Published private(set) var lastError: String?
 
+    /// Latest control event from the X4 (button → hub). Cleared by consumers.
+    @Published var lastControlEvent: BikeHudControlEvent?
+
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
     private var telemetryChar: CBCharacteristic?
+    private var controlChar: CBCharacteristic?
 
     private let serviceUUID = CBUUID(string: BikeHudPacketV1.serviceUUID)
     private let telemetryUUID = CBUUID(string: BikeHudPacketV1.telemetryUUID)
+    private let controlUUID = CBUUID(string: BikeHudPacketV1.controlUUID)
 
     override init() {
         super.init()
@@ -66,6 +71,7 @@ final class HudBleClient: NSObject, ObservableObject {
         stopScanOnly()
         peripheral = nil
         telemetryChar = nil
+        controlChar = nil
         state = .idle
         lastWriteOK = false
     }
@@ -119,6 +125,7 @@ extension HudBleClient: CBCentralManagerDelegate {
             case .poweredOff:
                 self.state = .poweredOff
                 self.telemetryChar = nil
+                self.controlChar = nil
             case .unauthorized:
                 self.state = .unauthorized
             default:
@@ -165,6 +172,7 @@ extension HudBleClient: CBCentralManagerDelegate {
             self.state = .failed(error?.localizedDescription ?? "Connect failed")
             self.peripheral = nil
             self.telemetryChar = nil
+            self.controlChar = nil
         }
     }
 
@@ -175,6 +183,7 @@ extension HudBleClient: CBCentralManagerDelegate {
     ) {
         Task { @MainActor in
             self.telemetryChar = nil
+            self.controlChar = nil
             self.peripheral = nil
             if let error {
                 self.lastError = error.localizedDescription
@@ -201,7 +210,10 @@ extension HudBleClient: CBPeripheralDelegate {
                 self.state = .failed("BikeHUD service not found")
                 return
             }
-            peripheral.discoverCharacteristics([self.telemetryUUID], for: service)
+            peripheral.discoverCharacteristics(
+                [self.telemetryUUID, self.controlUUID],
+                for: service
+            )
         }
     }
 
@@ -215,13 +227,26 @@ extension HudBleClient: CBPeripheralDelegate {
                 self.state = .failed(error.localizedDescription)
                 return
             }
-            guard let char = service.characteristics?.first(where: {
+            guard let telem = service.characteristics?.first(where: {
                 $0.uuid == self.telemetryUUID
             }) else {
                 self.state = .failed("Telemetry characteristic not found")
                 return
             }
-            self.telemetryChar = char
+            self.telemetryChar = telem
+
+            // Control is best-effort for older firmware that lacks B10E0003.
+            if let ctl = service.characteristics?.first(where: {
+                $0.uuid == self.controlUUID
+            }) {
+                self.controlChar = ctl
+                if ctl.properties.contains(.notify) {
+                    peripheral.setNotifyValue(true, for: ctl)
+                }
+            } else {
+                self.controlChar = nil
+            }
+
             let name = peripheral.name ?? BikeHudPacketV1.deviceName
             self.state = .ready(name: name)
         }
@@ -236,6 +261,43 @@ extension HudBleClient: CBPeripheralDelegate {
             if let error {
                 self.lastWriteOK = false
                 self.lastError = error.localizedDescription
+            }
+        }
+    }
+
+    nonisolated func peripheral(
+        _ peripheral: CBPeripheral,
+        didUpdateValueFor characteristic: CBCharacteristic,
+        error: Error?
+    ) {
+        Task { @MainActor in
+            if let error {
+                self.lastError = error.localizedDescription
+                return
+            }
+            guard characteristic.uuid == self.controlUUID,
+                  let data = characteristic.value,
+                  let evt = BikeHudControlEvent.decode(data)
+            else {
+                return
+            }
+            self.lastControlEvent = evt
+        }
+    }
+
+    nonisolated func peripheral(
+        _ peripheral: CBPeripheral,
+        didUpdateNotificationStateFor characteristic: CBCharacteristic,
+        error: Error?
+    ) {
+        Task { @MainActor in
+            if let error {
+                self.lastError = "Notify enable failed: \(error.localizedDescription)"
+                return
+            }
+            if characteristic.uuid == self.controlUUID {
+                // Useful desk signal when CCCD is armed.
+                print("[ble] control notifications \(characteristic.isNotifying ? "ON" : "OFF")")
             }
         }
     }

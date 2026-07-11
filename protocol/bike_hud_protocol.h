@@ -26,11 +26,23 @@ extern "C" {
  */
 #define BIKE_HUD_MSG_TIME_SYNC 0x10u
 
+/**
+ * Control event (X4 → hub notify on control characteristic).
+ * Still 16 bytes; hub acts on `event` (e.g. pause toggle).
+ */
+#define BIKE_HUD_MSG_CONTROL 0x20u
+
+/** Control event codes (`BikeHudControlEvent.event`). */
+#define BIKE_HUD_EVT_NONE 0u
+#define BIKE_HUD_EVT_PAUSE_TOGGLE 1u
+
 /** Advertised BLE local name. */
 #define BIKE_HUD_DEVICE_NAME "BikeHUD"
 
 #define BIKE_HUD_UUID_SERVICE_STR "B10E0001-C0C0-41A3-B4C6-42494B454855"
 #define BIKE_HUD_UUID_TELEMETRY_STR "B10E0002-C0C0-41A3-B4C6-42494B454855"
+/** Control: X4 notifies hub of button events (pause, etc.). */
+#define BIKE_HUD_UUID_CONTROL_STR "B10E0003-C0C0-41A3-B4C6-42494B454855"
 
 /** flags bitfield (telemetry) */
 #define BIKE_HUD_FLAG_HR_VALID (1u << 0)
@@ -81,6 +93,16 @@ typedef struct BikeHudTimeSync {
   uint8_t day_of_week;
   uint8_t reserved[6];
 } BikeHudTimeSync;
+
+/**
+ * Device → hub control event (NOTIFY on control characteristic).
+ * Same 16-byte footprint for simple parsers on both sides.
+ */
+typedef struct BikeHudControlEvent {
+  uint8_t version; /* BIKE_HUD_MSG_CONTROL (0x20) */
+  uint8_t event;   /* BIKE_HUD_EVT_* */
+  uint8_t reserved[14];
+} BikeHudControlEvent;
 #pragma pack(pop)
 
 #if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
@@ -88,6 +110,8 @@ _Static_assert(sizeof(BikeHudPacketV1) == BIKE_HUD_PACKET_V1_SIZE,
                "BikeHudPacketV1 must be 16 bytes");
 _Static_assert(sizeof(BikeHudTimeSync) == BIKE_HUD_PACKET_V1_SIZE,
                "BikeHudTimeSync must be 16 bytes");
+_Static_assert(sizeof(BikeHudControlEvent) == BIKE_HUD_PACKET_V1_SIZE,
+               "BikeHudControlEvent must be 16 bytes");
 #endif
 
 static inline uint16_t bike_hud_speed_kmh_x10(uint16_t speed_cm_s) {
@@ -102,6 +126,11 @@ static inline int bike_hud_is_telemetry(const uint8_t *raw, uint16_t len) {
 static inline int bike_hud_is_time_sync(const uint8_t *raw, uint16_t len) {
   return raw && len == BIKE_HUD_PACKET_V1_SIZE &&
          raw[0] == BIKE_HUD_MSG_TIME_SYNC;
+}
+
+static inline int bike_hud_is_control(const uint8_t *raw, uint16_t len) {
+  return raw && len == BIKE_HUD_PACKET_V1_SIZE &&
+         raw[0] == BIKE_HUD_MSG_CONTROL;
 }
 
 static inline int bike_hud_packet_version_ok(const BikeHudPacketV1 *p) {

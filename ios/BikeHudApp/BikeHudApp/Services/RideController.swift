@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import UIKit
 import BikeHudProtocol
@@ -32,6 +33,7 @@ final class RideController: ObservableObject {
     private var pausedAccumulated: TimeInterval = 0
     private var pauseBeganAt: Date?
     private var lastTimeSyncAt: Date?
+    private var controlCancellable: AnyCancellable?
 
     // Demo synthetic ride state
     private var demoElapsed: UInt16 = 0
@@ -50,6 +52,13 @@ final class RideController: ObservableObject {
         clockTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.maybeSyncTime(force: false) }
         }
+        // X4 Confirm → pause/resume as soon as the notify arrives.
+        controlCancellable = ble.$lastControlEvent
+            .compactMap { $0 }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] evt in
+                self?.handleControlEvent(evt)
+            }
     }
 
     func connectHud() {
@@ -100,6 +109,19 @@ final class RideController: ObservableObject {
         writeCurrentPacket(paused: true)
     }
 
+    /// Toggle pause/resume (phone UI or X4 Confirm button via control notify).
+    func togglePause() {
+        switch session {
+        case .running:
+            pauseSession()
+        case .paused:
+            startSession()
+        case .idle:
+            // No-op: need an explicit Start so desk accident presses do nothing.
+            break
+        }
+    }
+
     func stopSession() {
         session = .idle
         stopTicker()
@@ -132,6 +154,17 @@ final class RideController: ObservableObject {
         updateElapsed()
         maybeSyncTime(force: false)
         writeCurrentPacket(paused: false)
+    }
+
+    private func handleControlEvent(_ evt: BikeHudControlEvent) {
+        ble.lastControlEvent = nil
+        switch evt.event {
+        case .pauseToggle:
+            togglePause()
+            demoNote = session == .paused ? "Paused from X4" : "Resumed from X4"
+        case .none:
+            break
+        }
     }
 
     /// Push a 16-byte TIME_SYNC so the HUD can free-run wall clock.

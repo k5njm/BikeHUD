@@ -97,7 +97,9 @@ void loop() {
 #endif
 
   // CrossPoint-style long-press power → sleep.
-  if (buttons_power_held_ms() >= kPowerSleepHoldMs) {
+  // Guard blocks re-entry right after wake (stale hold / bounce).
+  if (!power_sleep_guard_active(now) &&
+      buttons_power_held_ms() >= kPowerSleepHoldMs) {
     power_enter_sleep();
   }
 
@@ -115,6 +117,11 @@ void loop() {
   }
 #endif
 
+  // Physical map (CrossPoint hardware names / BikeHUD actions):
+  //   Front Left / Side VolUp  → prev page
+  //   Front Right / Side VolDown → next page
+  //   Confirm → pause toggle notify to hub
+  //   Back → invert ride UI
   switch (buttons_poll()) {
   case BoardButton::Right:
   case BoardButton::VolumeDown:
@@ -127,8 +134,16 @@ void loop() {
     hud_prev_page();
     break;
   case BoardButton::Confirm:
+    power_note_activity();
+#if !defined(BIKE_HUD_DEMO)
+    ble_service_notify_control_event(BIKE_HUD_EVT_PAUSE_TOGGLE);
+#else
+    Serial.println("[main] pause (demo — no BLE)");
+#endif
+    break;
   case BoardButton::Back:
     power_note_activity();
+    hud_toggle_invert();
     break;
   default:
     break;

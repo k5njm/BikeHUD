@@ -24,6 +24,12 @@ void power_note_activity();
 void power_poll_auto_sleep(uint32_t now_ms);
 
 /**
+ * True for a short window after soft-wake — main must not re-enter sleep
+ * on a bounce of the power button used for wake.
+ */
+bool power_sleep_guard_active(uint32_t now_ms);
+
+/**
  * Sleep now: splash, stop BLE, deep sleep (battery) or soft-sleep (USB).
  * Returns only after soft-wake.
  */
