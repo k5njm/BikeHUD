@@ -77,6 +77,11 @@ BoardButton buttons_poll() {
     return BoardButton::None;
   }
 
+  // Power is handled via hold timing in main (sleep), not as a short edge.
+  if (now == BoardButton::Power) {
+    return BoardButton::None;
+  }
+
   if (now != BoardButton::None && now != last_emitted) {
     last_emitted = now;
     return now;
@@ -86,4 +91,19 @@ BoardButton buttons_poll() {
     last_emitted = BoardButton::None;
   }
   return BoardButton::None;
+}
+
+uint32_t buttons_power_held_ms() {
+  static uint32_t down_since = 0;
+  if (digitalRead(PIN_BTN_POWER) == LOW) {
+    if (down_since == 0) {
+      down_since = millis();
+      if (down_since == 0) {
+        down_since = 1;
+      }
+    }
+    return millis() - down_since;
+  }
+  down_since = 0;
+  return 0;
 }

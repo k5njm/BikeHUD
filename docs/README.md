@@ -7,6 +7,7 @@
 | [hubs.md](hubs.md) | Phone vs Watch single-writer rules |
 | [flash-and-restore.md](flash-and-restore.md) | Backup X4, flash BikeHUD, restore CrossPoint |
 | [ci.md](ci.md) | GitHub Actions, releases, signed IPA later |
+| [power.md](power.md) | Sleep/wake (power button), deep sleep, splash |
 | [roadmap.md](roadmap.md) | Phased plan |
 | [images/](images/) | Photos for README / docs |
 

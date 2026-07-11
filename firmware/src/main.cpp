@@ -5,11 +5,13 @@
  */
 
 #include <Arduino.h>
+#include <esp_sleep.h>
 
 #include "bike_hud_protocol.h"
 #include "ble_service.h"
 #include "buttons.h"
 #include "hud.h"
+#include "power.h"
 #include "telemetry.h"
 
 Telemetry g_telemetry;
@@ -58,6 +60,14 @@ void setup() {
                 BIKE_HUD_MSG_TIME_SYNC);
   Serial.printf("free heap boot: %u\n", (unsigned)ESP.getFreeHeap());
 
+  // Log why we woke (power button vs first boot / USB reset).
+  const esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+  if (cause == ESP_SLEEP_WAKEUP_GPIO) {
+    Serial.println("[power] woke from deep sleep (power button)");
+  } else {
+    Serial.printf("[power] boot cause %d\n", (int)cause);
+  }
+
   buttons_begin();
   hud_begin();
 
@@ -78,6 +88,12 @@ void loop() {
 #else
   ble_service_loop();
 #endif
+
+  // CrossPoint-style: hold power ~0.5s → sleep splash → deep sleep.
+  // Wake: hold/press the same button (GPIO3).
+  if (buttons_power_held_ms() >= kPowerSleepHoldMs) {
+    power_enter_sleep();
+  }
 
   switch (buttons_poll()) {
   case BoardButton::Right:
