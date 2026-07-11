@@ -1,54 +1,61 @@
 # Power management (X4)
 
-## Hardware vs software
+Inspired by CrossPoint’s `HalPowerManager` / `enterDeepSleep`.
 
-On the Xteink X4 the **top power button is GPIO3 (active low)**. There is no
-separate “always-off” power cut that CrossPoint exclusively owns — **sleep and
-wake are implemented in software**, same as CrossPoint:
+## Hardware
 
-| Action | Behaviour |
+| Pin | Role |
 |---|---|
-| **Hold power ~0.5 s (awake)** | Draw sleep splash → stop BLE → **deep sleep** |
-| **Press power (asleep)** | ESP32-C3 **GPIO wake** → full reboot into BikeHUD |
-| **E-ink panel** | Keeps the last image with almost no power while MCU sleeps |
+| **GPIO3** | Power button (active **low**) |
+| **GPIO13** | Battery **latch MOSFET** — LOW cuts MCU power on battery |
 
-So a “frozen” screen is normal when sleeping — the panel is bistable. The MCU is
-mostly off; it is **not** stuck mid-frame unless something else is wrong.
+CrossPoint drives **GPIO13 low + `gpio_hold_en`** before deep sleep. On battery the MCU is then fully off (including RTC). The power button is hard-wired to briefly power the rail and boot the chip — GPIO wake is mainly for **USB-powered** wake.
+
+E-ink is bistable: the last image (sleep splash) stays with almost no panel power.
 
 ## BikeHUD behaviour
 
-1. Long-press power ≥ 500 ms  
-2. Splash: **BikeHUD / Sleeping / hold power to wake** (full e-ink refresh: black → white → splash)  
-3. Wait for button **release** (so wake is not instant)  
-4. Sleep mode:
-   - **Unplugged:** deep sleep, wake on GPIO3 low → cold boot  
-   - **USB connected:** **soft-sleep** (MCU idle loop). USB-Serial/JTAG on ESP32-C3 often forces an immediate wake from deep sleep, which looked like “flash then back to the ride UI.” Soft-sleep keeps the splash and waits for another long-press.  
-5. Long-press again to wake → BLE restarts → full UI redraw  
+### Manual sleep
+1. Hold power ≥ **500 ms**  
+2. Full-refresh splash: **BikeHUD / Sleeping / hold power to wake**  
+3. Wait for button **release**  
+4. Enter sleep:
+   - **Unplugged:** deep sleep (latch low, GPIO wake armed)  
+   - **USB connected:** **soft-sleep** idle loop (USB-JTAG makes deep sleep bounce: black → white → UI)
 
-Side buttons (page left/right) do not sleep the device.
+### Manual wake
+- **Battery deep sleep:** press power (hardware power-up → cold boot)  
+- **Soft-sleep:** hold power ≥ 500 ms again → BLE + UI resume  
 
-## If it will not wake
+### Auto-sleep (inactivity)
+Same idea as CrossPoint’s default **10 minute** timeout:
 
-1. Hold the power button 1–2 s.  
-2. Plug **USB-C** (data cable) — USB reset often brings the chip back.  
-3. Flash again: `cd firmware && pio run -e x4 -t upload`  
-4. Restore CrossPoint from backup if needed (`docs/flash-and-restore.md`).
+| Resets the idle timer |
+|---|
+| Side buttons (page flip, etc.) |
+| BLE connect / disconnect |
+| Telemetry or time-sync writes |
 
-Some units need a firm press on the edge power key; it is easy to short-tap.
+Constant: `kAutoSleepIdleMs` in `firmware/include/power.h` (default `10 * 60 * 1000`). Set to `0` to disable.
+
+## If wake fails
+
+1. Hold power 1–2 s  
+2. Plug USB-C (reset / soft path)  
+3. `pio run -e x4 -t upload`  
+4. Restore CrossPoint from backup if needed  
 
 ## Power budget (rough)
 
 | State | Notes |
 |---|---|
-| Awake + BLE advertising / connected | Tens of mA (dominates ride day) |
-| Deep sleep + e-ink static image | µA class on the ESP32-C3 path |
-| Partial e-ink refresh | Short spikes when painting |
+| Awake + BLE | Tens of mA (ride) |
+| Soft-sleep (USB) | Lower than active UI, not µA |
+| Deep sleep + latch (battery) | Near-off; CrossPoint-class |
+| E-ink static splash | Negligible |
 
-For multi-day “leave on the bars” use **sleep** between rides. For an active ride
-leave the unit awake so BLE stays connected.
+## Future
 
-## Future ideas
-
-- Auto-sleep after N minutes with no BLE / no packets  
-- Lighter light-sleep while connected (harder with NimBLE + e-ink)  
-- Richer sleep art / battery % on splash  
+- Settings packet from iOS for timeout minutes / never  
+- Light sleep while connected  
+- Optional “keep awake while LIVE packets flow” is already true via activity notes  

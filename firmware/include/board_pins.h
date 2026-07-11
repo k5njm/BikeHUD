@@ -24,6 +24,10 @@ static const int PIN_BTN_ADC1 = 1;
 static const int PIN_BTN_ADC2 = 2;
 static const int PIN_BTN_POWER = 3;
 
+// Battery power latch MOSFET (CrossPoint / stock X4): drive LOW + hold in deep
+// sleep so the rail is cut on battery. Wake is hard-wired power-button pulse.
+static const int PIN_PWR_LATCH = 13;
+
 // Battery voltage divider (½ pack on ADC)
 static const int PIN_BAT_ADC = 0;
 

@@ -9,6 +9,7 @@
 
 #include "bike_hud_protocol.h"
 #include "ble_service.h"
+#include "board_pins.h"
 #include "buttons.h"
 #include "hud.h"
 #include "power.h"
@@ -60,10 +61,13 @@ void setup() {
                 BIKE_HUD_MSG_TIME_SYNC);
   Serial.printf("free heap boot: %u\n", (unsigned)ESP.getFreeHeap());
 
-  // Log why we woke (power button vs first boot / USB reset).
+  // Ensure battery latch is ON after soft-wake / boot (CrossPoint GPIO13).
+  pinMode(PIN_PWR_LATCH, OUTPUT);
+  digitalWrite(PIN_PWR_LATCH, HIGH);
+
   const esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
   if (cause == ESP_SLEEP_WAKEUP_GPIO) {
-    Serial.println("[power] woke from deep sleep (power button)");
+    Serial.println("[power] woke from deep sleep (GPIO / power button)");
   } else {
     Serial.printf("[power] boot cause %d\n", (int)cause);
   }
@@ -77,7 +81,10 @@ void setup() {
   ble_service_begin();
 #endif
 
+  power_note_activity();
   Serial.printf("free heap ready: %u\n", (unsigned)ESP.getFreeHeap());
+  Serial.printf("[power] auto-sleep after %lu min idle\n",
+                (unsigned long)(kAutoSleepIdleMs / 60000UL));
 }
 
 void loop() {
@@ -89,20 +96,39 @@ void loop() {
   ble_service_loop();
 #endif
 
-  // CrossPoint-style: hold power ~0.5s → sleep splash → deep sleep.
-  // Wake: hold/press the same button (GPIO3).
+  // CrossPoint-style long-press power → sleep.
   if (buttons_power_held_ms() >= kPowerSleepHoldMs) {
     power_enter_sleep();
   }
 
+  static uint32_t last_pkts = 0;
+  static bool last_linked = false;
+#if !defined(BIKE_HUD_DEMO)
+  const bool linked = ble_service_is_connected();
+  if (linked != last_linked) {
+    last_linked = linked;
+    power_note_activity();
+  }
+  if (g_telemetry.write_count != last_pkts) {
+    last_pkts = g_telemetry.write_count;
+    power_note_activity(); // BLE telemetry / time-sync counts as activity
+  }
+#endif
+
   switch (buttons_poll()) {
   case BoardButton::Right:
   case BoardButton::VolumeDown:
+    power_note_activity();
     hud_next_page();
     break;
   case BoardButton::Left:
   case BoardButton::VolumeUp:
+    power_note_activity();
     hud_prev_page();
+    break;
+  case BoardButton::Confirm:
+  case BoardButton::Back:
+    power_note_activity();
     break;
   default:
     break;
@@ -113,6 +139,8 @@ void loop() {
 #else
   hud_update(g_telemetry, now, ble_service_is_connected());
 #endif
+
+  power_poll_auto_sleep(now);
 
   static uint32_t last_heap_log = 0;
   if (now - last_heap_log > 5000) {
